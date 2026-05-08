@@ -44,7 +44,9 @@ class ZoneController extends Controller
             $perPage = $validated['per_page'] ?? 15;
             $sort = $validated['sort'] ?? 'latest';
 
-            $query = Zone::query()->with('creator');
+            $query = Zone::query()
+                ->with('creator')
+                ->withCount('checkpoints');
 
             if (! empty($validated['search'])) {
                 $query->where('name', 'like', '%'.$validated['search'].'%');
@@ -69,7 +71,7 @@ class ZoneController extends Controller
     {
         try {
             $zone = Zone::query()->create($request->validated());
-            $zone->load('creator');
+            $zone->load('creator')->loadCount('checkpoints');
 
             return response()->json([
                 'success' => true,
@@ -84,7 +86,7 @@ class ZoneController extends Controller
     public function show(Zone $zone): JsonResponse
     {
         try {
-            $zone->load('creator');
+            $zone->load('creator')->loadCount('checkpoints');
 
             return response()->json([
                 'success' => true,
@@ -100,7 +102,7 @@ class ZoneController extends Controller
     {
         try {
             $zone->update($request->validated());
-            $zone->load('creator');
+            $zone->load('creator')->loadCount('checkpoints');
 
             return response()->json([
                 'success' => true,

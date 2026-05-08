@@ -49,7 +49,7 @@ There is no separate SPA or mobile app in this repository; the default `package.
 | Users | CRUD via API resources; optional `only_trashed` / `include_trashed` on index; soft delete; restore endpoint. |
 | Roles | Read-only listing and show (no create/update/delete routes). |
 | Auth | Email/password login returns JWT (`access_token`, `token_type`, `expires_in`) plus authenticated `user` and `role`; authenticated clients can call `auth/me` and `auth/logout`. |
-| Zones | Full REST under `auth:api`; create/update/delete require role name exactly **`Admin`**. |
+| Zones | Full REST under `auth:api`; create/update/delete require role name exactly **`Admin`**; responses include `checkpoint_count` derived from related checkpoints. |
 | Checkpoints | Full REST under `auth:api`; supports pagination, filtering (`zone_id`, `is_active`, `location_type`), and name search. |
 | Patrol sessions | Full REST under `auth:api`; supports pagination, filtering (`user_id`, `zone_id`, `status`), and sorting by `started_at`. |
 | Checkpoint events | Full REST under `auth:api`; backend-derived validation results; pagination; filtering (`patrol_session_id`, `checkpoint_id`, `status`, `detection_type`); sorting by `detected_at` (`latest` / `oldest`). No foreign key to `location_logs`. No soft deletes. |
@@ -159,6 +159,7 @@ Important paths under `backend-laravel-v1` and their responsibilities:
 | `routes/api.php` | All JSON API endpoints |
 | `routes/web.php` | `GET /` → `welcome` view only |
 | `routes/console.php` | Custom Artisan `inspire` command only |
+| `app/Http/Controllers/Controller.php` | Base HTTP controller extending Laravel routing controller; provides trait/middleware support used by API controllers |
 | `app/Http/Controllers/Api/` | API controllers (`Auth`, `User`, `Role`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `Zone`, `Checkpoint`, `PatrolSession`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `BlockchainRecord`) |
 | `app/Http/Middleware/` | `EnsureUserIsAdmin` |
 | `app/Http/Requests/` | `StoreUserRequest`, `UpdateUserRequest`, `StoreZoneRequest`, `UpdateZoneRequest`, `StoreCheckpointRequest`, `UpdateCheckpointRequest`, `StorePatrolSessionRequest`, `UpdatePatrolSessionRequest`, `StoreCheckpointEventRequest`, `UpdateCheckpointEventRequest`, `StoreCheckpointEventMetricRequest`, `UpdateCheckpointEventMetricRequest`, `StoreLocationLogRequest`, `StoreCameraRequest`, `UpdateCameraRequest` |
@@ -182,6 +183,7 @@ Important paths under `backend-laravel-v1` and their responsibilities:
 | File | Role |
 |------|------|
 | `routes/api.php` | Registers public `auth/login`, JWT-protected API groups, admin-only users/roles endpoints, and `auth/me` / `auth/logout` token lifecycle routes |
+| `app/Http/Controllers/Controller.php` | Shared base controller (`Illuminate\Routing\Controller`) with standard Laravel traits; required so controller-level `$this->middleware(...)` works |
 | `app/Http/Controllers/Api/ZoneController.php` | Zones CRUD + custom JSON envelope for list/detail |
 | `app/Http/Controllers/Api/CheckpointController.php` | Checkpoints CRUD + filters/search + custom JSON envelope |
 | `app/Http/Controllers/Api/PatrolSessionController.php` | Patrol sessions CRUD + filters/sort + custom JSON envelope |
@@ -236,9 +238,9 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | PUT/PATCH | `/api/users/{user}` | `UserController@update` | `admin` | Update user (admin-only) | `UpdateUserRequest` | `UserResource` |
 | DELETE | `/api/users/{user}` | `UserController@destroy` | `admin` | Soft delete user (admin-only) | — | `{ "message": "User deleted successfully." }` |
 | POST | `/api/users/{user}/restore` | `UserController@restore` | `admin` | Restore soft-deleted user (admin-only) | — | `UserResource` |
-| GET | `/api/zones` | `ZoneController@index` | — | List/search/sort zones | Inline query: `search`, `sort`, `per_page`, `page` | `{ success, message, data }` with paginated resource payload inside `data` |
+| GET | `/api/zones` | `ZoneController@index` | — | List/search/sort zones | Inline query: `search`, `sort`, `per_page`, `page` | `{ success, message, data }` with paginated resource payload inside `data` (each zone includes `checkpoint_count`) |
 | POST | `/api/zones` | `ZoneController@store` | `EnsureUserIsAdmin` | Create zone | `StoreZoneRequest` | `{ success, message, data }` |
-| GET | `/api/zones/{zone}` | `ZoneController@show` | — | Show zone | — | `{ success, message, data }` |
+| GET | `/api/zones/{zone}` | `ZoneController@show` | — | Show zone | — | `{ success, message, data }` (zone includes `checkpoint_count`) |
 | PUT/PATCH | `/api/zones/{zone}` | `ZoneController@update` | `EnsureUserIsAdmin` | Update zone | `UpdateZoneRequest` | `{ success, message, data }` |
 | DELETE | `/api/zones/{zone}` | `ZoneController@destroy` | `EnsureUserIsAdmin` | Delete zone | — | **204** empty body |
 | GET | `/api/cameras` | `CameraController@index` | — | List cameras | — | Custom `{ success, message, data }` JSON |
@@ -733,7 +735,7 @@ Unable to determine from current implementation — **no** application-level `sc
 ### Core workflows
 
 - **User lifecycle:** CRUD + soft delete + restore via `UserController`; passwords hashed via model cast on `User`.
-- **Zone lifecycle:** Authenticated users read; admins mutate; responses wrapped with `success` / `message` in `ZoneController`.
+- **Zone lifecycle:** Authenticated users read; admins mutate; responses wrapped with `success` / `message` in `ZoneController`; zone payloads include `checkpoint_count` via `checkpoints` relationship counting.
 - **Checkpoint lifecycle:** Authenticated users can CRUD checkpoints with zone eager loading, index filtering/search, and `204` hard delete response.
 - **Patrol session lifecycle:** Authenticated users can CRUD patrol sessions with user/zone/blockchain-record eager loading, index filtering/sort, and `204` hard delete response.
 - **Checkpoint events lifecycle:** Authenticated users can CRUD checkpoint events with `patrolSession` / `checkpoint` / `metric` eager loading, index filtering/sort by `detected_at`, `201` on create, and `204` empty response on delete.
@@ -912,7 +914,7 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 
 ### Performance
 
-- No explicit N+1 protection on `BlockchainRecordController@index` (simple query); `UserController@index` uses `with('role')`. Zone listing uses `with('creator')`. **Unable to determine** production load characteristics from code alone.
+- No explicit N+1 protection on `BlockchainRecordController@index` (simple query); `UserController@index` uses `with('role')`. Zone listing uses `with('creator')->withCount('checkpoints')`. **Unable to determine** production load characteristics from code alone.
 
 ---
 
