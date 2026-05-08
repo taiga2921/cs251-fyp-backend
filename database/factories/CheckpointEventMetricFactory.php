@@ -20,12 +20,12 @@ class CheckpointEventMetricFactory extends Factory
     {
         return [
             'checkpoint_event_id' => CheckpointEvent::factory()->create()->id,
-            'distance_score' => ->faker->randomFloat(2, 0, 100),
-            'accuracy_score' => ->faker->randomFloat(2, 0, 100),
-            'time_score' => ->faker->randomFloat(2, 0, 100),
-            'stability_score' => ->faker->randomFloat(2, 0, 100),
-            'gap_factor' => ->faker->randomFloat(2, 0, 1),
-            'integrity_factor' => ->faker->randomFloat(2, 0, 1),
+            'distance_score' => $this->faker->randomFloat(2, 0, 100),
+            'accuracy_score' => $this->faker->randomFloat(2, 0, 100),
+            'time_score' => $this->faker->randomFloat(2, 0, 100),
+            'stability_score' => $this->faker->randomFloat(2, 0, 100),
+            'gap_factor' => $this->faker->randomFloat(2, 0, 1),
+            'integrity_factor' => $this->faker->randomFloat(2, 0, 1),
         ];
     }
 }

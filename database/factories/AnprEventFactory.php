@@ -20,11 +20,11 @@ class AnprEventFactory extends Factory
      */
     public function definition(): array
     {
-        $vehicleId = ->faker->boolean(70)
+        $vehicleId = $this->faker->boolean(70)
             ? Vehicle::query()->inRandomOrder()->value('id')
             : null;
 
-        $blockchainRecordId = ->faker->boolean(50)
+        $blockchainRecordId = $this->faker->boolean(50)
             ? BlockchainRecord::query()->inRandomOrder()->value('id')
             : null;
 
@@ -32,13 +32,13 @@ class AnprEventFactory extends Factory
             'vehicle_id' => $vehicleId,
             'camera_id' => Camera::query()->inRandomOrder()->value('id') ?? Camera::factory()->create()->id,
             'blockchain_record_id' => $blockchainRecordId,
-            'plate_number' => strtoupper(->faker->bothify('???-####')),
-            'confidence' => ->faker->randomFloat(4, 0, 1),
-            'detection_time' => ->faker->dateTimeBetween('-14 days', 'now'),
-            'is_flagged' => ->faker->boolean(25),
-            'is_valid' => ->faker->boolean(90),
-            'latitude' => ->faker->boolean(85) ? ->faker->latitude(-90, 90) : null,
-            'longitude' => ->faker->boolean(85) ? ->faker->longitude(-180, 180) : null,
+            'plate_number' => strtoupper($this->faker->bothify('???-####')),
+            'confidence' => $this->faker->randomFloat(4, 0, 1),
+            'detection_time' => $this->faker->dateTimeBetween('-14 days', 'now'),
+            'is_flagged' => $this->faker->boolean(25),
+            'is_valid' => $this->faker->boolean(90),
+            'latitude' => $this->faker->boolean(85) ? $this->faker->latitude(-90, 90) : null,
+            'longitude' => $this->faker->boolean(85) ? $this->faker->longitude(-180, 180) : null,
         ];
     }
 }

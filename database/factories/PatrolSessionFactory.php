@@ -22,16 +22,16 @@ class PatrolSessionFactory extends Factory
     {
         $userId = User::query()->inRandomOrder()->value('id') ?? User::factory()->create()->id;
         $zoneId = Zone::query()->inRandomOrder()->value('id') ?? Zone::factory()->create()->id;
-        $status = ->faker->randomElement(['active', 'completed', 'aborted']);
-        $startedAt = ->faker->dateTimeBetween('-14 days', 'now');
+        $status = $this->faker->randomElement(['active', 'completed', 'aborted']);
+        $startedAt = $this->faker->dateTimeBetween('-14 days', 'now');
 
         $endedAt = null;
-        if ($status !== 'active' || ->faker->boolean(40)) {
-            $endedAt = ->faker->dateTimeBetween($startedAt, 'now');
+        if ($status !== 'active' || $this->faker->boolean(40)) {
+            $endedAt = $this->faker->dateTimeBetween($startedAt, 'now');
         }
 
         $blockchainRecordId = null;
-        if (->faker->boolean(35)) {
+        if ($this->faker->boolean(35)) {
             $blockchainRecordId = BlockchainRecord::query()->inRandomOrder()->value('id');
         }
 
