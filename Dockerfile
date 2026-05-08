@@ -43,5 +43,6 @@ USER www-data
 EXPOSE 8080
 
 # Start long-running web services in foreground for production.
+# Resolve PHP-FPM binary name across image variants before launching Nginx.
 # Run migrations/seed/cache in Render pre-deploy step using scripts/00-laravel-deploy.sh.
-CMD ["sh", "-lc", "php-fpm -D && nginx -g 'daemon off;'"]
+CMD ["sh", "-lc", "PHP_FPM_BIN=\"$(command -v php-fpm || command -v php-fpm8.3 || command -v php-fpm83)\" && [ -n \"$PHP_FPM_BIN\" ] && \"$PHP_FPM_BIN\" -D && nginx -g 'daemon off;'"]
