@@ -21,18 +21,19 @@ class UserSeeder extends Seeder
         $this->seedUser('Admin User', 'admin@example.com', $adminRole?->id);
         $this->seedUser('Security Operator', 'operator@example.com', $operatorRole?->id);
         $this->seedUser('Guard User', 'guard@example.com', $guardRole?->id);
-
-        User::factory()->count(10)->create();
     }
 
     private function seedUser(string $name, string $email, ?string $roleId): void
     {
-        $user = User::query()->firstOrNew(['email' => $email]);
-        $user->name = $name;
-        $user->password = Hash::make('password');
-        $user->role_id = $roleId;
-        $user->email_verified_at = now();
-        $user->two_factor_enabled = false;
-        $user->save();
+        User::query()->updateOrCreate(
+            ['email' => $email],
+            [
+                'name' => $name,
+                'password' => Hash::make('password'),
+                'role_id' => $roleId,
+                'email_verified_at' => now(),
+                'two_factor_enabled' => false,
+            ]
+        );
     }
 }

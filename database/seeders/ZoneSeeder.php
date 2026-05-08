@@ -12,25 +12,23 @@ class ZoneSeeder extends Seeder
      */
     public function run(): void
     {
-        $names = [
-            'Main Entrance',
-            'Parking Lot A',
-            'Server Room',
-            'Reception Area',
-            'Loading Dock',
-            'Conference Room B',
-            'Ground Floor Lobby',
-            'Rooftop Access',
-            'Storage Warehouse',
-            'Security Checkpoint',
+        $zones = [
+            ['name' => 'Main Entrance', 'description' => 'Primary public access point.'],
+            ['name' => 'Parking Lot A', 'description' => 'Vehicle entry and staging area.'],
+            ['name' => 'Server Room', 'description' => 'Restricted infrastructure zone.'],
+            ['name' => 'Reception Area', 'description' => 'Front desk and visitor processing.'],
+            ['name' => 'Loading Dock', 'description' => 'Goods receiving and dispatch area.'],
+            ['name' => 'Conference Room B', 'description' => 'Meeting room wing B.'],
+            ['name' => 'Ground Floor Lobby', 'description' => 'Main interior lobby space.'],
+            ['name' => 'Rooftop Access', 'description' => 'Roof access control point.'],
+            ['name' => 'Storage Warehouse', 'description' => 'Inventory and supplies storage.'],
+            ['name' => 'Security Checkpoint', 'description' => 'Guard-operated verification point.'],
         ];
 
-        foreach ($names as $name) {
-            $zoneData = Zone::factory()->make(['name' => $name])->toArray();
-
+        foreach ($zones as $zone) {
             Zone::query()->updateOrCreate(
-                ['name' => $name],
-                collect($zoneData)->except(['name'])->all()
+                ['name' => $zone['name']],
+                ['description' => $zone['description']]
             );
         }
     }

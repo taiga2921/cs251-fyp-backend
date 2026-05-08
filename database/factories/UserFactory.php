@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Models\Role;
 use App\Models\User;
+use Faker\Factory as FakerFactory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 
@@ -19,11 +20,13 @@ class UserFactory extends Factory
      */
     public function definition(): array
     {
+        $faker = $this->faker ?? FakerFactory::create();
+
         return [
-            'name' => $this->faker->name(),
-            'email' => $this->faker->unique()->safeEmail(),
-            'phone' => $this->faker->phoneNumber(),
-            'address' => $this->faker->address(),
+            'name' => $faker->name(),
+            'email' => $faker->unique()->safeEmail(),
+            'phone' => $faker->phoneNumber(),
+            'address' => $faker->address(),
             'role_id' => Role::query()->inRandomOrder()->value('id'),
             'email_verified_at' => now(),
             'password' => Hash::make('password'),
