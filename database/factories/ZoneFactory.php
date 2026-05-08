@@ -21,7 +21,7 @@ class ZoneFactory extends Factory
         $userId = User::query()->inRandomOrder()->value('id');
 
         return [
-            'name' => fake()->unique()->randomElement([
+            'name' => ->faker->unique()->randomElement([
                 'Main Entrance',
                 'Parking Lot A',
                 'Server Room',
@@ -38,7 +38,7 @@ class ZoneFactory extends Factory
                 'Cafeteria',
                 'Executive Suite',
             ]),
-            'description' => fake()->boolean(70) ? fake()->sentence() : fake()->paragraph(),
+            'description' => ->faker->boolean(70) ? ->faker->sentence() : ->faker->paragraph(),
             'created_by' => $userId,
         ];
     }

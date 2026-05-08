@@ -14,7 +14,7 @@ class CheckpointSeeder extends Seeder
     public function run(): void
     {
         if (! Zone::query()->exists()) {
-            Zone::factory()->count(5)->create();
+            $this->call(ZoneSeeder::class);
         }
 
         $checkpointNames = [
@@ -31,14 +31,22 @@ class CheckpointSeeder extends Seeder
         ];
 
         Zone::query()->get()->each(function (Zone $zone) use ($checkpointNames): void {
-            $count = fake()->numberBetween(3, 5);
+            $count = random_int(3, 5);
             $names = collect($checkpointNames)->shuffle()->take($count)->values();
 
             $names->each(function (string $name) use ($zone): void {
-                Checkpoint::factory()->create([
+                $checkpointData = Checkpoint::factory()->make([
                     'zone_id' => $zone->id,
                     'name' => $name,
-                ]);
+                ])->toArray();
+
+                Checkpoint::query()->updateOrCreate(
+                    [
+                        'zone_id' => $zone->id,
+                        'name' => $name,
+                    ],
+                    collect($checkpointData)->except(['zone_id', 'name'])->all()
+                );
             });
         });
     }

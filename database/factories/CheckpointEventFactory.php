@@ -24,14 +24,14 @@ class CheckpointEventFactory extends Factory
         $checkpointId = Checkpoint::query()->inRandomOrder()->value('id')
             ?? Checkpoint::factory()->create()->id;
 
-        $enteredAt = fake()->boolean(60) ? fake()->dateTimeBetween('-7 days', 'now') : null;
+        $enteredAt = ->faker->boolean(60) ? ->faker->dateTimeBetween('-7 days', 'now') : null;
         $exitedAt = null;
-        if ($enteredAt !== null && fake()->boolean(70)) {
-            $exitedAt = fake()->dateTimeBetween($enteredAt, 'now');
+        if ($enteredAt !== null && ->faker->boolean(70)) {
+            $exitedAt = ->faker->dateTimeBetween($enteredAt, 'now');
         }
 
-        $detectedAt = fake()->boolean(85) ? fake()->dateTimeBetween('-7 days', 'now') : null;
-        $processedAt = fake()->boolean(75) ? fake()->dateTimeBetween($detectedAt ?? '-7 days', 'now') : null;
+        $detectedAt = ->faker->boolean(85) ? ->faker->dateTimeBetween('-7 days', 'now') : null;
+        $processedAt = ->faker->boolean(75) ? ->faker->dateTimeBetween($detectedAt ?? '-7 days', 'now') : null;
 
         return [
             'patrol_session_id' => $patrolSessionId,
@@ -40,9 +40,9 @@ class CheckpointEventFactory extends Factory
             'exited_at' => $exitedAt,
             'detected_at' => $detectedAt,
             'processed_at' => $processedAt,
-            'detection_type' => fake()->randomElement(['continuous', 'resume']),
-            'confidence_score' => fake()->randomFloat(2, 0, 100),
-            'status' => fake()->randomElement(['pending', 'verified', 'suspicious', 'uncertain', 'rejected']),
+            'detection_type' => ->faker->randomElement(['continuous', 'resume']),
+            'confidence_score' => ->faker->randomFloat(2, 0, 100),
+            'status' => ->faker->randomElement(['pending', 'verified', 'suspicious', 'uncertain', 'rejected']),
         ];
     }
 }

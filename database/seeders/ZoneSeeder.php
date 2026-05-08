@@ -26,7 +26,12 @@ class ZoneSeeder extends Seeder
         ];
 
         foreach ($names as $name) {
-            Zone::factory()->create(['name' => $name]);
+            $zoneData = Zone::factory()->make(['name' => $name])->toArray();
+
+            Zone::query()->updateOrCreate(
+                ['name' => $name],
+                collect($zoneData)->except(['name'])->all()
+            );
         }
     }
 }

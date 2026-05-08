@@ -18,12 +18,12 @@ class VehicleFactory extends Factory
     public function definition(): array
     {
         return [
-            'plate_number' => strtoupper(fake()->bothify('???-####')),
-            'owner_name' => fake()->boolean(85) ? fake()->name() : null,
-            'vehicle_type' => fake()->boolean(85) ? fake()->randomElement(['car', 'motorcycle', 'truck', 'van']) : null,
-            'status' => fake()->randomElement(['normal', 'flagged', 'whitelist']),
-            'source' => fake()->randomElement(['manual', 'auto_detected']),
-            'notes' => fake()->boolean(60) ? fake()->sentence() : null,
+            'plate_number' => strtoupper(->faker->bothify('???-####')),
+            'owner_name' => ->faker->boolean(85) ? ->faker->name() : null,
+            'vehicle_type' => ->faker->boolean(85) ? ->faker->randomElement(['car', 'motorcycle', 'truck', 'van']) : null,
+            'status' => ->faker->randomElement(['normal', 'flagged', 'whitelist']),
+            'source' => ->faker->randomElement(['manual', 'auto_detected']),
+            'notes' => ->faker->boolean(60) ? ->faker->sentence() : null,
         ];
     }
 }

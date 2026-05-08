@@ -18,12 +18,12 @@ class CheckpointFactory extends Factory
      */
     public function definition(): array
     {
-        $locationType = fake()->randomElement(['outdoor', 'indoor']);
+        $locationType = ->faker->randomElement(['outdoor', 'indoor']);
         $zoneId = Zone::query()->inRandomOrder()->value('id') ?? Zone::factory()->create()->id;
 
         return [
             'zone_id' => $zoneId,
-            'name' => fake()->randomElement([
+            'name' => ->faker->randomElement([
                 'Main Entrance Gate',
                 'Parking Lot Checkpoint',
                 'Server Room Door',
@@ -35,9 +35,9 @@ class CheckpointFactory extends Factory
                 'Emergency Exit Point',
                 'Ground Floor Lobby',
             ]),
-            'description' => fake()->boolean(70) ? fake()->sentence() : null,
-            'latitude' => fake()->latitude(),
-            'longitude' => fake()->longitude(),
+            'description' => ->faker->boolean(70) ? ->faker->sentence() : null,
+            'latitude' => ->faker->latitude(),
+            'longitude' => ->faker->longitude(),
             'radius' => $locationType === 'indoor' ? 40 : 20,
             'location_type' => $locationType,
             'is_active' => true,
