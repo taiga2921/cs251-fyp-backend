@@ -14,11 +14,11 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RoleSeeder::class,
             UserSeeder::class,
-            // ZoneSeeder::class,
+            ZoneSeeder::class,
             // CameraSeeder::class,
             // BlockchainRecordSeeder::class,
             // PatrolSessionSeeder::class,
-            // CheckpointSeeder::class,
+            CheckpointSeeder::class,
             // CheckpointEventSeeder::class,
             // VehicleSeeder::class,
             // AnprEventSeeder::class,
