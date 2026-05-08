@@ -2,27 +2,41 @@ FROM serversideup/php:8.3-fpm-nginx
 
 USER root
 
-COPY . .
+# App/runtime environment
+ENV APP_ENV=production \
+    APP_DEBUG=false \
+    LOG_CHANNEL=stderr \
+    WEBROOT=/var/www/html/public \
+    PHP_ERRORS_STDERR=1 \
+    RUN_SCRIPTS=1 \
+    AUTORUN_ENABLED=true \
+    SKIP_COMPOSER=1 \
+    COMPOSER_ALLOW_SUPERUSER=1
 
-ENV SKIP_COMPOSER 0
-ENV WEBROOT /var/www/html/public
-ENV PHP_ERRORS_STDERR 1
-ENV RUN_SCRIPTS 1
-ENV AUTORUN_ENABLED false
+WORKDIR /var/www/html
 
-ENV APP_ENV production
-ENV APP_DEBUG false
+# Copy Composer manifests first for better layer caching
+COPY --chown=www-data:www-data composer.json composer.lock ./
 
-RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+# Install PHP deps exactly from lock (no dev)
+USER www-data
+RUN composer install \
+    --no-dev \
+    --prefer-dist \
+    --no-interaction \
+    --no-progress \
+    --optimize-autoloader
+
+# Copy application code
+USER root
+COPY --chown=www-data:www-data . .
+
+# Writable Laravel dirs
+RUN mkdir -p storage bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
 USER www-data
 
-RUN composer install --no-dev --optimize-autoloader --ignore-platform-req=ext-sodium
-
-RUN php artisan config:cache && \
-    php artisan route:cache && \
-    php artisan view:cache
-
 EXPOSE 8080
-
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8080"]
+# Let the base image start nginx+php-fpm (no artisan serve)
