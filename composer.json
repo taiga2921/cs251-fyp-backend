@@ -3,11 +3,23 @@
     "name": "laravel/laravel",
     "type": "project",
     "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "keywords": [
+        "laravel",
+        "framework"
+    ],
     "license": "MIT",
     "require": {
         "php": "^8.3",
         "laravel/framework": "^13.0",
+        "symfony/http-foundation": "^7.1",
+        "symfony/mailer": "^7.1",
+        "symfony/mime": "^7.1",
+        "symfony/process": "^7.1",
+        "symfony/routing": "^7.1",
+        "symfony/string": "^7.1",
+        "symfony/translation": "^7.1",
+        "symfony/uid": "^7.1",
+        "symfony/var-dumper": "^7.1",
         "laravel/tinker": "^3.0",
         "php-open-source-saver/jwt-auth": "^2.9"
     },
