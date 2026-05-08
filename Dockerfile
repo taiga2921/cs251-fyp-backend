@@ -30,6 +30,7 @@ RUN composer install \
 # Copy application code
 USER root
 COPY --chown=www-data:www-data . .
+COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Writable Laravel dirs
 RUN mkdir -p storage bootstrap/cache \
