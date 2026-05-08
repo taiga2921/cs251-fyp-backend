@@ -24,7 +24,7 @@ return new class extends Migration
             $table->enum('tracking_state', ['active', 'resumed', 'offline']);
             $table->float('speed')->nullable()->comment('Meters per second');
             $table->float('heading')->nullable()->comment('Degrees 0-360');
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent();
 
             $table->index(['patrol_session_id', 'timestamp']);
             $table->index(['user_id', 'timestamp']);
