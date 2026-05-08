@@ -9,7 +9,7 @@ ENV APP_ENV=production \
     WEBROOT=/var/www/html/public \
     PHP_ERRORS_STDERR=1 \
     RUN_SCRIPTS=1 \
-    AUTORUN_ENABLED=true \
+    AUTORUN_ENABLED=false \
     SKIP_COMPOSER=1 \
     COMPOSER_ALLOW_SUPERUSER=1
 
@@ -34,9 +34,12 @@ COPY --chown=www-data:www-data . .
 # Writable Laravel dirs
 RUN mkdir -p storage bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R 775 storage bootstrap/cache
+    && chmod -R 775 storage bootstrap/cache \
+    && chmod +x scripts/00-laravel-deploy.sh
 
 USER www-data
 
 EXPOSE 8080
+
+CMD ["bash", "scripts/00-laravel-deploy.sh"]
 # Let the base image start nginx+php-fpm (no artisan serve)
