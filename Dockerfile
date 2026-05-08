@@ -42,5 +42,6 @@ USER www-data
 
 EXPOSE 8080
 
-CMD ["bash", "scripts/00-laravel-deploy.sh"]
-# Let the base image start nginx+php-fpm (no artisan serve)
+# Start long-running web services in foreground for production.
+# Run migrations/seed/cache in Render pre-deploy step using scripts/00-laravel-deploy.sh.
+CMD ["sh", "-lc", "php-fpm -D && nginx -g 'daemon off;'"]
