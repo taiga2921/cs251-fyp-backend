@@ -33,6 +33,7 @@ The application is a **JSON API backend** (Laravel) that supports:
 - **Checkpoint events** on patrol sessions (backend-derived validation results per checkpoint), exposed as JWT-protected CRUD under `/api/checkpoint-events`.
 - **Checkpoint event metrics** (one scoring breakdown per checkpoint event), exposed as JWT-protected CRUD under `/api/checkpoint-event-metrics`.
 - **Patrol location logs** (append-only GPS samples tied to a patrol session and user), ingested and queried under `/api/location-logs` with JWT; **no** link to checkpoints.
+- **Patrol route breadcrumbs** (append-only track points per patrol session), **`POST /api/patrol-routes`** with JWT.
 - **Blockchain record metadata** storage and querying (status, network, environment, entity linkage), aligned with concepts like Ganache/Sepolia and development/production environments.
 - **Camera records** for ANPR capture sources and status tracking, exposed as JWT-protected CRUD under `/api/cameras`.
 - **Vehicle records** for watchlist/allowlist workflows with CRUD under `/api/vehicles`.
@@ -52,9 +53,11 @@ There is no separate SPA or mobile app in this repository; the default `package.
 | Zones | Full REST under `auth:api`; create/update/delete require role name exactly **`Admin`**; responses include `checkpoint_count` derived from related checkpoints. |
 | Checkpoints | Full REST under `auth:api`; supports pagination, filtering (`zone_id`, `is_active`, `location_type`), and name search. |
 | Patrol sessions | Full REST under `auth:api`; supports pagination, filtering (`user_id`, `zone_id`, `status`), and sorting by `started_at`. |
+| Patrol routes | **`POST /api/patrol-routes`** under `auth:api` — append-only GPS breadcrumb rows (`patrol_routes`); FK **`patrol_session_id`**; optional **`patrol_log_id`** body alias merged to canonical session id before validation. |
 | Checkpoint events | Full REST under `auth:api`; backend-derived validation results; pagination; filtering (`patrol_session_id`, `checkpoint_id`, `status`, `detection_type`); sorting by `detected_at` (`latest` / `oldest`). No foreign key to `location_logs`. No soft deletes. |
 | Checkpoint event metrics | Full REST under `auth:api`; one row per checkpoint event (unique `checkpoint_event_id`); scoring factors for explaining confidence; `calculated_confidence_score` returned via API resource only (not stored). No soft deletes. |
 | Location logs | `index` / `store` / `show` / `destroy` under `auth:api` (**no** `update`; append-only rows). Pagination; filters `patrol_session_id`, `user_id`; default sort by device `timestamp` ascending; `server_received_at` set on create for sync-delay analysis. Not linked to checkpoints. |
+| PWA location sync | **`POST /api/pwa/sync`** under `auth:api` — accepts queued **`location_log`** payloads (camelCase fields from the PWA client); stores rows in **`location_logs`** with client **`locationLogId`** as primary key for idempotent replay. |
 | Cameras | Full REST under `auth:api`; CRUD camera records for ANPR/RTSP management with indexing on `is_active`, `ip_address`, and `last_seen_at`. |
 | Vehicles | Full REST under `auth:api`; UUID records keyed by `plate_number` uniqueness with status/source enums for monitoring workflows. |
 | ANPR events | Full REST under `auth:api`; stores plate detections with required `camera_id`, optional `vehicle_id` and optional `blockchain_record_id`; indexed by plate/time/flags and FK columns. |
@@ -65,8 +68,8 @@ There is no separate SPA or mobile app in this repository; the default `package.
 ### Main modules / features
 
 - **API layer**: `routes/api.php`, controllers under `App\Http\Controllers\Api`.
-- **Domain models**: `User`, `Role`, `Zone`, `Checkpoint`, `PatrolSession`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, and `BlockchainRecord`.
-- **Validation**: Form requests for users/zones/checkpoints/patrol-sessions/checkpoint-events/checkpoint-event-metrics/location-logs/cameras (`StoreLocationLogRequest` only for location logs; `StoreCameraRequest` + `UpdateCameraRequest` for cameras); inline validation for auth login and some index query params.
+- **Domain models**: `User`, `Role`, `Zone`, `Checkpoint`, `PatrolSession`, `PatrolRoute`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, and `BlockchainRecord`.
+- **Validation**: Form requests for users/zones/checkpoints/patrol-sessions/checkpoint-events/checkpoint-event-metrics/location-logs/patrol-routes/cameras (`StoreLocationLogRequest` only for location logs; `StorePatrolRouteRequest` for patrol breadcrumbs; `StoreCameraRequest` + `UpdateCameraRequest` for cameras); inline validation for auth login and some index query params.
 
 ### Runtime versions (from `composer.json`)
 
@@ -108,8 +111,8 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 - **Routes** map HTTP verbs to **controllers**.
 - **Eloquent models** encapsulate persistence and relationships.
-- **Form requests** validate input for users, zones, checkpoints, patrol sessions, checkpoint events, checkpoint event metrics, and location log creation.
-- **API resources** shape JSON for users, roles, zones, checkpoints, patrol sessions, checkpoint events, checkpoint event metrics, location logs, and blockchain records.
+- **Form requests** validate input for users, zones, checkpoints, patrol sessions, patrol route creation (**`StorePatrolRouteRequest`**), checkpoint events, checkpoint event metrics, location log creation, PWA **`location_log`** sync (**`SyncPwaLocationLogRequest`**), and cameras.
+- **API resources** shape JSON for users, roles, zones, checkpoints, patrol sessions, patrol breadcrumbs (**`PatrolRouteResource`**), checkpoint events, checkpoint event metrics, location logs, and blockchain records.
 - **Custom middleware** (`EnsureUserIsAdmin`) enforces an admin role for specific zone mutations.
 - **Global exception rendering** in `bootstrap/app.php` normalizes JSON errors for API/JSON clients (validation, auth, JWT, 404).
 
@@ -160,14 +163,14 @@ Important paths under `backend-laravel-v1` and their responsibilities:
 | `routes/web.php` | `GET /` → `welcome` view only |
 | `routes/console.php` | Custom Artisan `inspire` command only |
 | `app/Http/Controllers/Controller.php` | Base HTTP controller extending Laravel routing controller; provides trait/middleware support used by API controllers |
-| `app/Http/Controllers/Api/` | API controllers (`Auth`, `User`, `Role`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `Zone`, `Checkpoint`, `PatrolSession`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `BlockchainRecord`) |
+| `app/Http/Controllers/Api/` | API controllers (`Auth`, `User`, `Role`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `Zone`, `Checkpoint`, `PatrolSession`, `PatrolRoute`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `PwaSync`, `BlockchainRecord`) |
 | `app/Http/Middleware/` | `EnsureUserIsAdmin` |
-| `app/Http/Requests/` | `StoreUserRequest`, `UpdateUserRequest`, `StoreZoneRequest`, `UpdateZoneRequest`, `StoreCheckpointRequest`, `UpdateCheckpointRequest`, `StorePatrolSessionRequest`, `UpdatePatrolSessionRequest`, `StoreCheckpointEventRequest`, `UpdateCheckpointEventRequest`, `StoreCheckpointEventMetricRequest`, `UpdateCheckpointEventMetricRequest`, `StoreLocationLogRequest`, `StoreCameraRequest`, `UpdateCameraRequest` |
-| `app/Http/Resources/` | `UserResource`, `RoleResource`, `ZoneResource`, `CheckpointResource`, `PatrolSessionResource`, `CheckpointEventResource`, `CheckpointEventMetricResource`, `LocationLogResource`, `BlockchainRecordResource` |
-| `app/Models/` | Eloquent models (`Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `Checkpoint`, `PatrolSession`, etc.) |
+| `app/Http/Requests/` | `StoreUserRequest`, `UpdateUserRequest`, `StoreZoneRequest`, `UpdateZoneRequest`, `StoreCheckpointRequest`, `UpdateCheckpointRequest`, `StorePatrolSessionRequest`, `UpdatePatrolSessionRequest`, `StorePatrolRouteRequest`, `StoreCheckpointEventRequest`, `UpdateCheckpointEventRequest`, `StoreCheckpointEventMetricRequest`, `UpdateCheckpointEventMetricRequest`, `StoreLocationLogRequest`, `SyncPwaLocationLogRequest`, `StoreCameraRequest`, `UpdateCameraRequest` |
+| `app/Http/Resources/` | `UserResource`, `RoleResource`, `ZoneResource`, `CheckpointResource`, `PatrolSessionResource`, `PatrolRouteResource`, `CheckpointEventResource`, `CheckpointEventMetricResource`, `LocationLogResource`, `BlockchainRecordResource` |
+| `app/Models/` | Eloquent models (`Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `Checkpoint`, `PatrolSession`, `PatrolRoute`, etc.) |
 | `app/Providers/AppServiceProvider.php` | Empty `register` / `boot` (no bindings) |
 | `config/` | Framework and JWT config (`auth.php`, `jwt.php`, etc.) |
-| `database/migrations/` | Schema for `roles`, `users`, `blockchain_records`, `zones`, `checkpoints`, `patrol_sessions`, `checkpoint_events`, `checkpoint_event_metrics`, `location_logs`, `cameras`, `vehicles`, `anpr_events`, `anpr_images`, `anpr_event_logs` |
+| `database/migrations/` | Schema for `roles`, `users`, `blockchain_records`, `zones`, `checkpoints`, `patrol_sessions`, `patrol_routes`, `checkpoint_events`, `checkpoint_event_metrics`, `location_logs`, `cameras`, `vehicles`, `anpr_events`, `anpr_images`, `anpr_event_logs` |
 | `database/seeders/` | `RoleSeeder`, `UserSeeder`, `ZoneSeeder`, `CameraSeeder`, `VehicleSeeder`, `BlockchainRecordSeeder`, `CheckpointSeeder`, `PatrolSessionSeeder`, `CheckpointEventSeeder`, `AnprEventSeeder`, `DatabaseSeeder` |
 | `database/factories/` | `UserFactory`, `ZoneFactory`, `CameraFactory`, `VehicleFactory`, `CheckpointFactory`, `PatrolSessionFactory`, `CheckpointEventFactory`, `CheckpointEventMetricFactory`, `AnprEventFactory` |
 
@@ -187,9 +190,11 @@ Important paths under `backend-laravel-v1` and their responsibilities:
 | `app/Http/Controllers/Api/ZoneController.php` | Zones CRUD + custom JSON envelope for list/detail |
 | `app/Http/Controllers/Api/CheckpointController.php` | Checkpoints CRUD + filters/search + custom JSON envelope |
 | `app/Http/Controllers/Api/PatrolSessionController.php` | Patrol sessions CRUD + filters/sort + custom JSON envelope |
+| `app/Http/Controllers/Api/PatrolRouteController.php` | **`POST /api/patrol-routes`** — append-only breadcrumbs (`StorePatrolRouteRequest`, `PatrolRouteResource`) |
 | `app/Http/Controllers/Api/CheckpointEventController.php` | Checkpoint events CRUD + filters/sort + custom JSON envelope (`CheckpointEventResource`; UUID route-model binding) |
 | `app/Http/Controllers/Api/CheckpointEventMetricController.php` | Checkpoint event metrics CRUD + pagination + custom JSON envelope (`CheckpointEventMetricResource`; UUID route-model binding) |
 | `app/Http/Controllers/Api/LocationLogController.php` | Location logs index/store/show/destroy + filters/sort + custom JSON envelope (`LocationLogResource`; UUID route-model binding; **no** update) |
+| `app/Http/Controllers/Api/PwaSyncController.php` | **`POST /api/pwa/sync`** — idempotent **`location_log`** ingest from PWA queue (`SyncPwaLocationLogRequest` → `LocationLog` UUID PK = client **`locationLogId`**) |
 | `app/Http/Controllers/Api/CameraController.php` | Cameras CRUD + form request validation + `Route::apiResource('cameras', ...)` under `auth:api` |
 | `app/Http/Controllers/Api/VehicleController.php` | Vehicles CRUD + inline validation + `Route::apiResource('vehicles', ...)` under `auth:api` |
 | `app/Models/BlockchainRecord.php` | Scopes, status helpers, `morphTo` entity |
@@ -210,7 +215,7 @@ Endpoints **do not** all share one envelope:
 | Pattern | Used by |
 |---------|---------|
 | Laravel `JsonResource` default: top-level `data`, optional `links`, `meta` for pagination | `UserController`, `RoleController`, `BlockchainRecordController` |
-| Custom `{ "success", "message", "data" }` | `AuthController@login`, `ZoneController` actions, `CheckpointController` actions, `PatrolSessionController` actions, `CheckpointEventController` actions, `CheckpointEventMetricController` actions, `LocationLogController` actions |
+| Custom `{ "success", "message", "data" }` | `AuthController@login`, `ZoneController` actions, `CheckpointController` actions, `PatrolSessionController` actions, `PatrolRouteController@store`, `CheckpointEventController` actions, `CheckpointEventMetricController` actions, `LocationLogController` actions |
 | Plain `{ "message" }` | `UserController@destroy` |
 | **204 No Content** | `ZoneController@destroy`, `CheckpointController@destroy`, `PatrolSessionController@destroy`, `CheckpointEventController@destroy`, `CheckpointEventMetricController@destroy`, `LocationLogController@destroy` |
 
@@ -258,6 +263,7 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | GET | `/api/patrol-sessions/{patrol_session}` | `PatrolSessionController@show` | — | Show patrol session | — | `{ success, message, data }` |
 | PUT/PATCH | `/api/patrol-sessions/{patrol_session}` | `PatrolSessionController@update` | — | Update patrol session | `UpdatePatrolSessionRequest` | `{ success, message, data }` |
 | DELETE | `/api/patrol-sessions/{patrol_session}` | `PatrolSessionController@destroy` | — | Hard delete patrol session | — | **204** empty body |
+| POST | `/api/patrol-routes` | `PatrolRouteController@store` | — | Record one GPS breadcrumb for a patrol session | `StorePatrolRouteRequest` (`patrol_session_id` required; legacy **`patrol_log_id`** accepted when session id omitted); optional **`timestamp`** (epoch ms) or **`recorded_at`** | `{ success, message, data }` (`PatrolRouteResource`; **201**) |
 | GET | `/api/checkpoint-events` | `CheckpointEventController@index` | — | List checkpoint events with pagination/filter/sort | Inline query: `patrol_session_id`, `checkpoint_id`, `status`, `detection_type`, `sort` (`latest` or `oldest` on `detected_at`), `per_page` | `{ success, message, data }` with paginated resource payload inside `data` |
 | POST | `/api/checkpoint-events` | `CheckpointEventController@store` | — | Create checkpoint event | `StoreCheckpointEventRequest` | `{ success, message, data }` |
 | GET | `/api/checkpoint-events/{checkpoint_event}` | `CheckpointEventController@show` | — | Show checkpoint event | Implicit UUID binding | `{ success, message, data }` |
@@ -270,6 +276,7 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | DELETE | `/api/checkpoint-event-metrics/{checkpoint_event_metric}` | `CheckpointEventMetricController@destroy` | — | Permanent delete checkpoint event metric | — | **204** empty body |
 | GET | `/api/location-logs` | `LocationLogController@index` | — | Paginated location logs; filter `patrol_session_id`, `user_id`; sort by device `timestamp` ascending | Inline query: `patrol_session_id`, `user_id`, `per_page` | `{ success, message, data }` with paginated `LocationLogResource` payload inside `data` |
 | POST | `/api/location-logs` | `LocationLogController@store` | — | Ingest single log; optional client `id` (UUID); server sets `server_received_at` | `StoreLocationLogRequest` | `{ success, message, data }` (**201**) |
+| POST | `/api/pwa/sync` | `PwaSyncController@sync` | — | Idempotent ingest from PWA **`sync_queue`** (`type: location_log`); client **`locationLogId`** maps to `location_logs.id`; **`patrolId`** maps to `patrol_session_id`; **`manual`** source stored as **`sync`** | `SyncPwaLocationLogRequest` | `{ success, message, data }` with **`LocationLog`** fields + **`duplicate`** boolean (**200** if replay / already stored, **201** on first insert) |
 | GET | `/api/location-logs/{location_log}` | `LocationLogController@show` | — | Show location log | Implicit UUID binding | `{ success, message, data }` |
 | DELETE | `/api/location-logs/{location_log}` | `LocationLogController@destroy` | — | Permanent delete log row | — | **204** empty body |
 | GET | `/api/vehicles` | `VehicleController@index` | — | List vehicles | — | `{ success, message, data }` |
@@ -320,6 +327,7 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | `vehicles` | `id` UUID | Vehicle metadata; `plate_number` unique/indexed; status enum (`normal`,`flagged`,`whitelist`); source enum (`manual`,`auto_detected`) |
 | `checkpoints` | `id` UUID | FK `zone_id` (UUID) → `zones` (cascade on delete), unique `(zone_id, name)`, indexes on `zone_id` and `is_active` |
 | `patrol_sessions` | `id` UUID | FK `user_id` (UUID) → `users` (cascade on delete), FK `zone_id` (UUID) → `zones` (restrict on delete), FK `blockchain_record_id` (UUID) → `blockchain_records` (nullable, null on delete), status enum (`active`,`completed`,`aborted`), indexes on `user_id`, `zone_id`, `blockchain_record_id`, `status`, and composite (`user_id`,`zone_id`,`started_at`) |
+| `patrol_routes` | `id` UUID | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete); `latitude` / `longitude` decimal (`10`,`7`); nullable `accuracy`, `altitude` float; `recorded_at` timestamp (device/sample time); `created_at` only (**no** `updated_at`; append-only breadcrumbs); composite index (`patrol_session_id`,`recorded_at`). |
 | `checkpoint_events` | `id` UUID | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete), FK `checkpoint_id` (UUID) → `checkpoints` (cascade on delete); nullable timestamps `entered_at`, `exited_at`, `detected_at`, `processed_at`; `detection_type` enum (`continuous`,`resume`, nullable); `confidence_score` float (default `0`); `status` enum (`pending`,`verified`,`suspicious`,`uncertain`,`rejected`, default `pending`); indexes on `patrol_session_id`, `checkpoint_id`, `status`, `detected_at`, and composite (`patrol_session_id`,`checkpoint_id`). **No** soft deletes; **no** FK between `location_logs` and `checkpoint_events`. |
 | `checkpoint_event_metrics` | `id` UUID | FK `checkpoint_event_id` (UUID) → `checkpoint_events` (cascade on delete), **unique** `checkpoint_event_id`; scoring columns `distance_score`, `accuracy_score`, `time_score`, `stability_score` (decimal `5,2`, default `0`); `gap_factor`, `integrity_factor` (decimal `4,2`, defaults `1.00`); `created_at` only (**no** `updated_at`). |
 | `location_logs` | `id` UUID | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete), FK `user_id` (UUID) → `users` (cascade on delete); `latitude` / `longitude` decimal (`10`,`7`); `accuracy` float; device `timestamp` unsigned bigint (milliseconds); nullable `server_received_at` (backend receive time); `source` enum (`live`,`resume`,`sync`); `tracking_state` enum (`active`,`resumed`,`offline`); nullable `speed`, `heading` float; `created_at` only (**no** `updated_at`; append-only). Composite indexes (`patrol_session_id`,`timestamp`), (`user_id`,`timestamp`); indexes on `source`, `tracking_state`. **No** FK to checkpoints. |
@@ -348,7 +356,12 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 - `zone()`: **belongsTo** `Zone`.
 - `blockchainRecord()`: **belongsTo** `BlockchainRecord`.
 - `locationLogs()`: **hasMany** `LocationLog`.
+- `patrolRoutes()`: **hasMany** `PatrolRoute`.
 - `checkpointEvents()`: **hasMany** `CheckpointEvent`.
+
+**`PatrolRoute`**
+
+- `patrolSession()`: **belongsTo** `PatrolSession`.
 
 **`Checkpoint`**
 
@@ -593,6 +606,26 @@ The `location_logs` module is implemented and wired:
 
 **API resource shape:** stored log fields (`latitude`, `longitude`, `accuracy`, device `timestamp`, `server_received_at`, `source`, `tracking_state`, `speed`, `heading`, `created_at`), optional nested `user` when loaded (`id`, `name`), optional nested `patrol_session` when loaded (`id`, `status`, `started_at`, `ended_at`). Timeline ordering for movement uses device **`timestamp`**, not `created_at`.
 
+### Patrol routes schema and API status
+
+The **`patrol_routes`** module is implemented for GPS breadcrumb append-only storage:
+
+- Migration: `2026_05_11_120000_create_patrol_routes_table.php`
+- Model: `App\Models\PatrolRoute` (UUID PK via **`HasUuids`**; **`UPDATED_AT`** disabled)
+- Relationship: **`PatrolSession::patrolRoutes()`** **hasMany**
+- API: **`PatrolRouteController@store`** + **`StorePatrolRouteRequest`** + **`PatrolRouteResource`** + **`Route::post('patrol-routes', …)`** under **`auth:api`** (**single POST**, no full **`apiResource`**)
+- **No** seeder or factory
+
+**Request semantics:** **`patrol_session_id`** required (**must exist** in **`patrol_sessions`**). If **`patrol_log_id`** is sent alone (legacy SPA alias), it is merged into **`patrol_session_id`** in **`prepareForValidation`** before validation — **not** persisted as a separate column. Optional **`guard_id`** is ignored on persist. **`recorded_at`** or browser **`timestamp`** (epoch ms) sets **`recorded_at`**; otherwise **`now()`**.
+
+### PWA location sync endpoint (`POST /api/pwa/sync`)
+
+Dedicated ingest for the SPA **`sync_queue`** (**JWT** **`auth:api`**):
+
+- Controller: **`PwaSyncController@sync`**
+- Form request: **`SyncPwaLocationLogRequest`** (**`type: location_log`**, camelCase fields **`patrolId`**, **`locationLogId`**, **`userId`**, **`trackingState`**, etc.)
+- Idempotency: client **`locationLogId`** becomes **`location_logs.id`** (UUID); replays return **`duplicate: true`** without a second insert. Client **`manual`** **`source`** is stored as **`sync`** (enum constraint).
+
 ### Cameras schema and API status
 
 The `cameras` module is implemented and wired:
@@ -652,6 +685,7 @@ The `anpr_event_logs` module is implemented and wired:
 - `2026_05_07_141500_create_checkpoint_events_table.php`
 - `2026_05_07_150000_create_checkpoint_event_metrics_table.php`
 - `2026_05_07_161000_create_location_logs_table.php`
+- `2026_05_11_120000_create_patrol_routes_table.php`
 - `2026_05_07_170000_create_cameras_table.php`
 - `2026_05_07_180000_create_vehicles_table.php`
 - `2026_05_07_190000_create_anpr_events_table.php`
@@ -918,4 +952,4 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 
 ---
 
-*Generated from repository analysis. Update this file when routes, schema, or auth boundaries change.*
+*Generated from repository analysis. Recent patrol/PWA additions: **`patrol_routes`** table + **`POST /api/patrol-routes`**, **`POST /api/pwa/sync`** (**`PwaSyncController`** / **`SyncPwaLocationLogRequest`**). Update this file when routes, schema, or auth boundaries change.*

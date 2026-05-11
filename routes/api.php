@@ -10,7 +10,9 @@ use App\Http\Controllers\Api\CheckpointController;
 use App\Http\Controllers\Api\CheckpointEventController;
 use App\Http\Controllers\Api\CheckpointEventMetricController;
 use App\Http\Controllers\Api\LocationLogController;
+use App\Http\Controllers\Api\PatrolRouteController;
 use App\Http\Controllers\Api\PatrolSessionController;
+use App\Http\Controllers\Api\PwaSyncController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\VehicleController;
@@ -35,10 +37,12 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('zones', ZoneController::class);
     Route::apiResource('checkpoints', CheckpointController::class);
     Route::apiResource('patrol-sessions', PatrolSessionController::class);
+    Route::post('patrol-routes', [PatrolRouteController::class, 'store']);
     Route::apiResource('checkpoint-events', CheckpointEventController::class);
     Route::apiResource('checkpoint-event-metrics', CheckpointEventMetricController::class);
     Route::apiResource('location-logs', LocationLogController::class)
         ->only(['index', 'store', 'show', 'destroy']);
+    Route::post('pwa/sync', [PwaSyncController::class, 'sync']);
     Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
     Route::apiResource('anpr-event-logs', AnprEventLogController::class);

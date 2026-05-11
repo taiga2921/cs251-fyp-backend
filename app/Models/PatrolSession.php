@@ -62,4 +62,9 @@ class PatrolSession extends Model
     {
         return $this->hasMany(CheckpointEvent::class);
     }
+
+    public function patrolRoutes(): HasMany
+    {
+        return $this->hasMany(PatrolRoute::class);
+    }
 }
