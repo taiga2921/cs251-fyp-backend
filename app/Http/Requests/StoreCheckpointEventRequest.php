@@ -24,7 +24,7 @@ class StoreCheckpointEventRequest extends FormRequest
             'exited_at' => ['nullable', 'date', 'after_or_equal:entered_at'],
             'detected_at' => ['nullable', 'date'],
             'processed_at' => ['nullable', 'date'],
-            'detection_type' => ['nullable', 'in:continuous,resume'],
+            'detection_type' => ['nullable', 'in:continuous,resume,manual'],
             'confidence_score' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['nullable', 'in:pending,verified,suspicious,uncertain,rejected'],
         ];

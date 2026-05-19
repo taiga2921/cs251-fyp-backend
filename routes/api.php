@@ -12,16 +12,23 @@ use App\Http\Controllers\Api\CheckpointEventMetricController;
 use App\Http\Controllers\Api\LocationLogController;
 use App\Http\Controllers\Api\PatrolRouteController;
 use App\Http\Controllers\Api\PatrolSessionController;
+use App\Http\Controllers\Api\PushSubscriptionController;
 use App\Http\Controllers\Api\PwaSyncController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\ZoneController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 
 Route::post('auth/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:api')->group(function (): void {
+    Route::post('broadcasting/auth', function (Request $request) {
+        return Broadcast::auth($request);
+    });
+
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
 
@@ -36,13 +43,20 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('cameras', CameraController::class);
     Route::apiResource('zones', ZoneController::class);
     Route::apiResource('checkpoints', CheckpointController::class);
+    Route::get('patrol-sessions/{patrol_session}/summary', [PatrolSessionController::class, 'summary'])
+        ->name('patrol-sessions.summary');
+    Route::post('patrol-sessions/{patrol_session}/validate', [PatrolSessionController::class, 'validateSession'])
+        ->name('patrol-sessions.validate');
     Route::apiResource('patrol-sessions', PatrolSessionController::class);
+    Route::get('patrol-routes', [PatrolRouteController::class, 'index']);
     Route::post('patrol-routes', [PatrolRouteController::class, 'store']);
     Route::apiResource('checkpoint-events', CheckpointEventController::class);
     Route::apiResource('checkpoint-event-metrics', CheckpointEventMetricController::class);
     Route::apiResource('location-logs', LocationLogController::class)
         ->only(['index', 'store', 'show', 'destroy']);
     Route::post('pwa/sync', [PwaSyncController::class, 'sync']);
+    Route::post('push-subscriptions', [PushSubscriptionController::class, 'store']);
+    Route::delete('push-subscriptions/{push_subscription}', [PushSubscriptionController::class, 'destroy']);
     Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
     Route::apiResource('anpr-event-logs', AnprEventLogController::class);

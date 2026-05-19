@@ -7,6 +7,9 @@ use App\Http\Requests\StorePatrolSessionRequest;
 use App\Http\Requests\UpdatePatrolSessionRequest;
 use App\Http\Resources\PatrolSessionResource;
 use App\Models\PatrolSession;
+use App\Services\PatrolBroadcastService;
+use App\Services\PatrolSessionSummaryService;
+use App\Services\PatrolValidationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -68,11 +71,16 @@ class PatrolSessionController extends Controller
         }
     }
 
-    public function store(StorePatrolSessionRequest $request): JsonResponse
+    public function store(StorePatrolSessionRequest $request, PatrolBroadcastService $broadcastService): JsonResponse
     {
         try {
             $patrolSession = PatrolSession::query()->create($request->validated());
+            $patrolSession->refresh();
             $patrolSession->load(['user', 'zone', 'blockchainRecord']);
+
+            if ($patrolSession->status === 'active') {
+                $broadcastService->sessionStarted($patrolSession);
+            }
 
             return response()->json([
                 'success' => true,
@@ -99,11 +107,54 @@ class PatrolSessionController extends Controller
         }
     }
 
-    public function update(UpdatePatrolSessionRequest $request, PatrolSession $patrolSession): JsonResponse
+    public function summary(PatrolSession $patrolSession, PatrolSessionSummaryService $summaryService): JsonResponse
     {
         try {
+            return response()->json([
+                'success' => true,
+                'message' => 'Patrol session summary retrieved successfully.',
+                'data' => $summaryService->build($patrolSession),
+            ], 200);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e);
+        }
+    }
+
+    public function validateSession(
+        PatrolSession $patrolSession,
+        PatrolValidationService $validationService,
+        PatrolBroadcastService $broadcastService,
+    ): JsonResponse {
+        try {
+            $result = $validationService->validatePatrolSession($patrolSession);
+            $broadcastService->validationCompleted($patrolSession, $result);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Patrol session validation completed.',
+                'data' => $result,
+            ], 200);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e);
+        }
+    }
+
+    public function update(
+        UpdatePatrolSessionRequest $request,
+        PatrolSession $patrolSession,
+        PatrolBroadcastService $broadcastService,
+    ): JsonResponse {
+        try {
+            $previousStatus = $patrolSession->status;
             $patrolSession->update($request->validated());
             $patrolSession->load(['user', 'zone', 'blockchainRecord']);
+
+            if (
+                $patrolSession->status !== $previousStatus
+                && in_array($patrolSession->status, ['completed', 'aborted'], true)
+            ) {
+                $broadcastService->sessionCompleted($patrolSession);
+            }
 
             return response()->json([
                 'success' => true,

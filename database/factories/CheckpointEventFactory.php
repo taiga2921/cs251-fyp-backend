@@ -40,7 +40,7 @@ class CheckpointEventFactory extends Factory
             'exited_at' => $exitedAt,
             'detected_at' => $detectedAt,
             'processed_at' => $processedAt,
-            'detection_type' => $this->faker->randomElement(['continuous', 'resume']),
+            'detection_type' => $this->faker->randomElement(['continuous', 'resume', 'manual']),
             'confidence_score' => $this->faker->randomFloat(2, 0, 100),
             'status' => $this->faker->randomElement(['pending', 'verified', 'suspicious', 'uncertain', 'rejected']),
         ];

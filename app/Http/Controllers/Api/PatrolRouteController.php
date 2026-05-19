@@ -6,13 +6,59 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StorePatrolRouteRequest;
 use App\Http\Resources\PatrolRouteResource;
 use App\Models\PatrolRoute;
+use App\Services\PatrolBroadcastService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class PatrolRouteController extends Controller
 {
-    public function store(StorePatrolRouteRequest $request): JsonResponse
+    public function index(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'patrol_session_id' => ['sometimes', 'uuid', 'exists:patrol_sessions,id'],
+                'per_page' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:1000'],
+                'page' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'data' => ['errors' => $validator->errors()->toArray()],
+                ], 422);
+            }
+
+            $validated = $validator->validated();
+
+            $query = PatrolRoute::query()->with(['patrolSession']);
+
+            if (array_key_exists('patrol_session_id', $validated)) {
+                $query->where('patrol_session_id', $validated['patrol_session_id']);
+            }
+
+            $query->orderBy('recorded_at', 'asc');
+
+            $patrolRoutes = $query
+                ->paginate($validated['per_page'] ?? 500)
+                ->withQueryString();
+
+            $payload = PatrolRouteResource::collection($patrolRoutes)->response()->getData(true);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Patrol routes retrieved successfully.',
+                'data' => $payload,
+            ], 200);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e);
+        }
+    }
+
+    public function store(StorePatrolRouteRequest $request, PatrolBroadcastService $broadcastService): JsonResponse
     {
         try {
             $data = $request->validated();
@@ -32,6 +78,7 @@ class PatrolRouteController extends Controller
             ]);
 
             $route->load(['patrolSession']);
+            $broadcastService->routeUpdated($route);
 
             return response()->json([
                 'success' => true,

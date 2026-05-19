@@ -7,6 +7,7 @@ use App\Http\Requests\StoreCheckpointEventRequest;
 use App\Http\Requests\UpdateCheckpointEventRequest;
 use App\Http\Resources\CheckpointEventResource;
 use App\Models\CheckpointEvent;
+use App\Services\PatrolBroadcastService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -30,7 +31,7 @@ class CheckpointEventController extends Controller
                 'patrol_session_id' => ['sometimes', 'uuid', 'exists:patrol_sessions,id'],
                 'checkpoint_id' => ['sometimes', 'uuid', 'exists:checkpoints,id'],
                 'status' => ['sometimes', 'in:pending,verified,suspicious,uncertain,rejected'],
-                'detection_type' => ['sometimes', 'nullable', 'in:continuous,resume'],
+                'detection_type' => ['sometimes', 'nullable', 'in:continuous,resume,manual'],
                 'sort' => ['sometimes', 'nullable', 'in:latest,oldest'],
                 'per_page' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100'],
             ]);
@@ -82,12 +83,13 @@ class CheckpointEventController extends Controller
         }
     }
 
-    public function store(StoreCheckpointEventRequest $request): JsonResponse
+    public function store(StoreCheckpointEventRequest $request, PatrolBroadcastService $broadcastService): JsonResponse
     {
         try {
             $checkpointEvent = CheckpointEvent::query()->create($request->validated());
 
             $checkpointEvent->load($this->eagerRelations());
+            $broadcastService->checkpointUpdated($checkpointEvent);
 
             return response()->json([
                 'success' => true,
@@ -114,12 +116,16 @@ class CheckpointEventController extends Controller
         }
     }
 
-    public function update(UpdateCheckpointEventRequest $request, CheckpointEvent $checkpointEvent): JsonResponse
-    {
+    public function update(
+        UpdateCheckpointEventRequest $request,
+        CheckpointEvent $checkpointEvent,
+        PatrolBroadcastService $broadcastService,
+    ): JsonResponse {
         try {
             $checkpointEvent->update($request->validated());
 
             $checkpointEvent->load($this->eagerRelations());
+            $broadcastService->checkpointUpdated($checkpointEvent);
 
             return response()->json([
                 'success' => true,

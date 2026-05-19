@@ -20,22 +20,27 @@ class PwaSyncController extends Controller
 
             $existing = LocationLog::query()->find($id);
             if ($existing !== null) {
-                $existing->load(['user', 'patrolSession']);
+                if ($this->payloadMatchesExisting($data, $existing)) {
+                    $existing->load(['user', 'patrolSession']);
+
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Location log already synced.',
+                        'data' => array_merge(
+                            (new LocationLogResource($existing))->resolve(),
+                            ['duplicate' => true],
+                        ),
+                    ], 200);
+                }
 
                 return response()->json([
-                    'success' => true,
-                    'message' => 'Location log already synced.',
-                    'data' => array_merge(
-                        (new LocationLogResource($existing))->resolve(),
-                        ['duplicate' => true],
-                    ),
-                ], 200);
+                    'success' => false,
+                    'message' => 'Location log ID already exists with a different payload.',
+                    'data' => null,
+                ], 409);
             }
 
-            $storedSource = match ($data['source']) {
-                'manual' => 'sync',
-                default => $data['source'],
-            };
+            $storedSource = $this->storedSource($data['source']);
 
             $accuracy = $data['accuracy'] ?? null;
             if ($accuracy === null) {
@@ -62,16 +67,24 @@ class PwaSyncController extends Controller
             } catch (QueryException $exception) {
                 $retryExisting = LocationLog::query()->find($id);
                 if ($retryExisting !== null) {
-                    $retryExisting->load(['user', 'patrolSession']);
+                    if ($this->payloadMatchesExisting($data, $retryExisting)) {
+                        $retryExisting->load(['user', 'patrolSession']);
+
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Location log already synced.',
+                            'data' => array_merge(
+                                (new LocationLogResource($retryExisting))->resolve(),
+                                ['duplicate' => true],
+                            ),
+                        ], 200);
+                    }
 
                     return response()->json([
-                        'success' => true,
-                        'message' => 'Location log already synced.',
-                        'data' => array_merge(
-                            (new LocationLogResource($retryExisting))->resolve(),
-                            ['duplicate' => true],
-                        ),
-                    ], 200);
+                        'success' => false,
+                        'message' => 'Location log ID already exists with a different payload.',
+                        'data' => null,
+                    ], 409);
                 }
 
                 throw $exception;
@@ -90,6 +103,45 @@ class PwaSyncController extends Controller
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function payloadMatchesExisting(array $data, LocationLog $existing): bool
+    {
+        $accuracy = $data['accuracy'] ?? 0.0;
+
+        return $existing->patrol_session_id === $data['patrolId']
+            && $existing->user_id === $data['userId']
+            && (float) $existing->latitude === (float) $data['lat']
+            && (float) $existing->longitude === (float) $data['lng']
+            && (int) $existing->timestamp === (int) $data['timestamp']
+            && $existing->source === $this->storedSource($data['source'])
+            && $existing->tracking_state === $data['trackingState']
+            && (float) ($existing->accuracy ?? 0) === (float) $accuracy
+            && $this->nullableFloatEquals($existing->speed, $data['speed'] ?? null)
+            && $this->nullableFloatEquals($existing->heading, $data['heading'] ?? null);
+    }
+
+    protected function storedSource(string $source): string
+    {
+        return match ($source) {
+            'manual' => 'sync',
+            default => $source,
+        };
+    }
+
+    protected function nullableFloatEquals(mixed $stored, mixed $incoming): bool
+    {
+        if ($stored === null && $incoming === null) {
+            return true;
+        }
+        if ($stored === null || $incoming === null) {
+            return false;
+        }
+
+        return (float) $stored === (float) $incoming;
     }
 
     protected function errorResponse(Throwable $e): JsonResponse

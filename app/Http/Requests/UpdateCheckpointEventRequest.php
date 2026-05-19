@@ -24,7 +24,7 @@ class UpdateCheckpointEventRequest extends FormRequest
             'exited_at' => ['sometimes', 'nullable', 'date', 'after_or_equal:entered_at'],
             'detected_at' => ['sometimes', 'nullable', 'date'],
             'processed_at' => ['sometimes', 'nullable', 'date'],
-            'detection_type' => ['sometimes', 'nullable', 'in:continuous,resume'],
+            'detection_type' => ['sometimes', 'nullable', 'in:continuous,resume,manual'],
             'confidence_score' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'status' => ['sometimes', 'nullable', 'in:pending,verified,suspicious,uncertain,rejected'],
         ];
