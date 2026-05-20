@@ -6,6 +6,7 @@ use App\Models\Checkpoint;
 use App\Models\CheckpointEvent;
 use App\Models\PatrolSession;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Str;
 
 /**
  * @extends Factory<CheckpointEvent>
@@ -34,6 +35,7 @@ class CheckpointEventFactory extends Factory
         $processedAt = $this->faker->boolean(75) ? $this->faker->dateTimeBetween($detectedAt ?? '-7 days', 'now') : null;
 
         return [
+            'id' => (string) Str::uuid(),
             'patrol_session_id' => $patrolSessionId,
             'checkpoint_id' => $checkpointId,
             'entered_at' => $enteredAt,

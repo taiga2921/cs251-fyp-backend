@@ -67,6 +67,7 @@ class PatrolValidationService
             'timestamp_issues' => $timestampIssues,
             'segment_anomalies' => $segmentAnomalies,
             'gaps' => $gaps,
+            'items' => $this->buildAnomalyItems($logs, $segments, $segmentAnomalies, $timestampIssues),
         ];
 
         $checkpointResults = [];
@@ -361,6 +362,209 @@ class PatrolValidationService
         }
 
         return $results;
+    }
+
+    /**
+     * Flat visualization items for map overlays (Milestone 10). Preserves legacy nested keys.
+     *
+     * @param  Collection<int, LocationLog>  $logs
+     * @param  list<array{segment_index: int, start_timestamp: int|null, end_timestamp: int|null, log_count: int, duration_seconds: int, log_indices: list<int>}>  $segments
+     * @param  array<int, array{major: bool, minor: bool, speed_anomaly: bool, gps_jump: bool, low_accuracy: bool, timestamp_issue: bool}>  $segmentAnomalies
+     * @param  array{duplicate_ids: list<string>, invalid_ids: list<string>, out_of_order_ids: list<string>}  $timestampIssues
+     * @return list<array<string, mixed>>
+     */
+    private function buildAnomalyItems(
+        Collection $logs,
+        array $segments,
+        array $segmentAnomalies,
+        array $timestampIssues,
+    ): array {
+        $items = [];
+        $timestampIssueIds = array_values(array_unique(array_merge(
+            $timestampIssues['duplicate_ids'],
+            $timestampIssues['invalid_ids'],
+            $timestampIssues['out_of_order_ids'],
+        )));
+        $invalidSet = array_flip($timestampIssues['invalid_ids']);
+        $outOfOrderSet = array_flip($timestampIssues['out_of_order_ids']);
+        $duplicateSet = array_flip($timestampIssues['duplicate_ids']);
+
+        foreach ($segments as $segment) {
+            $indices = $segment['log_indices'];
+            if ($indices === []) {
+                continue;
+            }
+
+            $segmentIndex = $segment['segment_index'];
+            $flags = $segmentAnomalies[$segmentIndex] ?? [];
+
+            for ($i = 1; $i < count($indices); $i++) {
+                $prev = $logs[$indices[$i - 1]];
+                $curr = $logs[$indices[$i]];
+
+                if (! $this->isValidTimestamp($prev->timestamp) || ! $this->isValidTimestamp($curr->timestamp)) {
+                    continue;
+                }
+
+                $deltaSeconds = max(0.001, ((int) $curr->timestamp - (int) $prev->timestamp) / 1000);
+                if ($deltaSeconds > self::GAP_THRESHOLD_SECONDS) {
+                    continue;
+                }
+
+                $distance = $this->haversineMeters(
+                    (float) $prev->latitude,
+                    (float) $prev->longitude,
+                    (float) $curr->latitude,
+                    (float) $curr->longitude
+                );
+
+                $calculatedSpeed = $distance / $deltaSeconds;
+                $reportedSpeed = $curr->speed !== null ? (float) $curr->speed : null;
+                $effectiveSpeed = max($calculatedSpeed, $reportedSpeed ?? 0.0);
+
+                if ($effectiveSpeed > self::MAX_SPEED_MPS) {
+                    $items[] = $this->anomalyItem(
+                        id: 'speed-'.$prev->id.'-'.$curr->id,
+                        type: 'speed_anomaly',
+                        severity: 'major',
+                        message: sprintf(
+                            'Speed anomaly: %.1f m/s (%.0f km/h) between consecutive logs',
+                            $effectiveSpeed,
+                            $effectiveSpeed * 3.6
+                        ),
+                        startLog: $prev,
+                        endLog: $curr,
+                        distanceMeters: $distance,
+                        speedMps: $effectiveSpeed,
+                        calculatedSpeedMps: $calculatedSpeed,
+                        reportedSpeedMps: $reportedSpeed,
+                    );
+                }
+
+                if ($distance > self::GPS_JUMP_DISTANCE_METERS && $deltaSeconds <= self::GPS_JUMP_MAX_SECONDS) {
+                    $items[] = $this->anomalyItem(
+                        id: 'jump-'.$prev->id.'-'.$curr->id,
+                        type: 'gps_jump',
+                        severity: 'major',
+                        message: sprintf(
+                            'GPS jump: %.0f m in %.1f s without a tracking gap',
+                            $distance,
+                            $deltaSeconds
+                        ),
+                        startLog: $prev,
+                        endLog: $curr,
+                        distanceMeters: $distance,
+                        speedMps: $calculatedSpeed,
+                        calculatedSpeedMps: $calculatedSpeed,
+                        reportedSpeedMps: $reportedSpeed,
+                    );
+                }
+            }
+
+            if (($flags['low_accuracy'] ?? false) === true) {
+                $first = $logs[$indices[0]];
+                $last = $logs[$indices[count($indices) - 1]];
+                $items[] = $this->anomalyItem(
+                    id: 'accuracy-segment-'.$segmentIndex,
+                    type: 'poor_accuracy',
+                    severity: ($flags['major'] ?? false) ? 'major' : 'minor',
+                    message: 'Poor GPS accuracy (>50 m) detected within movement segment',
+                    startLog: $first,
+                    endLog: $last,
+                );
+            }
+
+            if (($flags['timestamp_issue'] ?? false) === true) {
+                $first = $logs[$indices[0]];
+                $last = $logs[$indices[count($indices) - 1]];
+                $items[] = $this->anomalyItem(
+                    id: 'timestamp-segment-'.$segmentIndex,
+                    type: 'timestamp_issue',
+                    severity: 'major',
+                    message: 'Timestamp integrity issue within movement segment',
+                    startLog: $first,
+                    endLog: $last,
+                );
+            }
+        }
+
+        foreach ($timestampIssueIds as $logId) {
+            $log = $logs->firstWhere('id', $logId);
+            if ($log === null) {
+                continue;
+            }
+
+            $reason = 'Timestamp issue';
+            $severity = 'major';
+            if (isset($invalidSet[$logId])) {
+                $reason = 'Invalid or missing timestamp';
+            } elseif (isset($outOfOrderSet[$logId])) {
+                $reason = 'Out-of-order timestamp';
+            } elseif (isset($duplicateSet[$logId])) {
+                $reason = 'Duplicate timestamp';
+                $severity = 'minor';
+            }
+
+            $items[] = $this->anomalyItem(
+                id: 'timestamp-log-'.$logId,
+                type: 'timestamp_issue',
+                severity: $severity,
+                message: $reason,
+                startLog: $log,
+                endLog: $log,
+            );
+        }
+
+        return $items;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function anomalyItem(
+        string $id,
+        string $type,
+        string $severity,
+        string $message,
+        LocationLog $startLog,
+        LocationLog $endLog,
+        ?float $distanceMeters = null,
+        ?float $speedMps = null,
+        ?float $calculatedSpeedMps = null,
+        ?float $reportedSpeedMps = null,
+    ): array {
+        $startTs = $this->isValidTimestamp($startLog->timestamp) ? (int) $startLog->timestamp : null;
+        $endTs = $this->isValidTimestamp($endLog->timestamp) ? (int) $endLog->timestamp : null;
+
+        $item = [
+            'id' => $id,
+            'type' => $type,
+            'severity' => $severity,
+            'message' => $message,
+            'start_log_id' => $startLog->id,
+            'end_log_id' => $endLog->id,
+            'start_timestamp' => $startTs,
+            'end_timestamp' => $endTs,
+            'start_latitude' => (float) $startLog->latitude,
+            'start_longitude' => (float) $startLog->longitude,
+            'end_latitude' => (float) $endLog->latitude,
+            'end_longitude' => (float) $endLog->longitude,
+        ];
+
+        if ($distanceMeters !== null) {
+            $item['distance_meters'] = round($distanceMeters, 2);
+        }
+        if ($speedMps !== null) {
+            $item['speed_mps'] = round($speedMps, 2);
+        }
+        if ($calculatedSpeedMps !== null) {
+            $item['calculated_speed_mps'] = round($calculatedSpeedMps, 2);
+        }
+        if ($reportedSpeedMps !== null) {
+            $item['reported_speed_mps'] = round($reportedSpeedMps, 2);
+        }
+
+        return $item;
     }
 
     /**

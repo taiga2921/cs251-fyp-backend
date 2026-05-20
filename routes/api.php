@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\CheckpointEventMetricController;
 use App\Http\Controllers\Api\LocationLogController;
 use App\Http\Controllers\Api\PatrolRouteController;
 use App\Http\Controllers\Api\PatrolSessionController;
+use App\Http\Controllers\Api\PushNotificationController;
 use App\Http\Controllers\Api\PushSubscriptionController;
 use App\Http\Controllers\Api\PwaSyncController;
 use App\Http\Controllers\Api\RoleController;
@@ -53,10 +54,11 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('checkpoint-events', CheckpointEventController::class);
     Route::apiResource('checkpoint-event-metrics', CheckpointEventMetricController::class);
     Route::apiResource('location-logs', LocationLogController::class)
-        ->only(['index', 'store', 'show', 'destroy']);
+        ->only(['index', 'store', 'show']);
     Route::post('pwa/sync', [PwaSyncController::class, 'sync']);
     Route::post('push-subscriptions', [PushSubscriptionController::class, 'store']);
     Route::delete('push-subscriptions/{push_subscription}', [PushSubscriptionController::class, 'destroy']);
+    Route::post('push-notifications/test', [PushNotificationController::class, 'test']);
     Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
     Route::apiResource('anpr-event-logs', AnprEventLogController::class);

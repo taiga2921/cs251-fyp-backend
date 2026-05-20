@@ -89,7 +89,7 @@ class CheckpointEventController extends Controller
             $checkpointEvent = CheckpointEvent::query()->create($request->validated());
 
             $checkpointEvent->load($this->eagerRelations());
-            $broadcastService->checkpointUpdated($checkpointEvent);
+            $broadcastService->checkpointUpdated($checkpointEvent, null);
 
             return response()->json([
                 'success' => true,
@@ -122,10 +122,11 @@ class CheckpointEventController extends Controller
         PatrolBroadcastService $broadcastService,
     ): JsonResponse {
         try {
+            $previousStatus = $checkpointEvent->status;
             $checkpointEvent->update($request->validated());
 
             $checkpointEvent->load($this->eagerRelations());
-            $broadcastService->checkpointUpdated($checkpointEvent);
+            $broadcastService->checkpointUpdated($checkpointEvent, $previousStatus);
 
             return response()->json([
                 'success' => true,

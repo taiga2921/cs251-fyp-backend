@@ -17,7 +17,8 @@ This document describes the **`backend-laravel-v1`** Laravel application as impl
 9. [External integrations](#9-external-integrations)
 10. [Dependencies](#10-dependencies)
 11. [Deployment & environment setup](#11-deployment--environment-setup)
-12. [Known issues / technical debt](#12-known-issues--technical-debt)
+12. [Automated test coverage](#12-automated-test-coverage)
+13. [Known issues / technical debt](#13-known-issues--technical-debt)
 
 ---
 
@@ -32,7 +33,7 @@ The application is a **JSON API backend** (Laravel) that supports:
 - **Geographic / facility “zones”** with admin-only mutations; authenticated users can list/view zones.
 - **Checkpoint events** on patrol sessions (backend-derived validation results per checkpoint), exposed as JWT-protected CRUD under `/api/checkpoint-events`.
 - **Checkpoint event metrics** (one scoring breakdown per checkpoint event), exposed as JWT-protected CRUD under `/api/checkpoint-event-metrics`.
-- **Patrol location logs** (append-only GPS samples tied to a patrol session and user), ingested and queried under `/api/location-logs` with JWT; **no** link to checkpoints.
+- **Patrol location logs** (immutable, append-only GPS evidence tied to a patrol session and user), ingested and queried under `/api/location-logs` with JWT; **no** HTTP update or delete; **no** link to checkpoints.
 - **Patrol route breadcrumbs** (append-only track points per patrol session), **`GET` / `POST /api/patrol-routes`** with JWT.
 - **Realtime patrol monitoring** via **Laravel Reverb** (WebSockets): private channels `patrol.monitoring` and `patrol.session.{id}`; JWT auth at **`POST /api/broadcasting/auth`**; events fired from patrol session / route / checkpoint / validation flows (**REST unchanged**).
 - **Blockchain record metadata** storage and querying (status, network, environment, entity linkage), aligned with concepts like Ganache/Sepolia and development/production environments.
@@ -57,7 +58,7 @@ There is no separate SPA or mobile app in this repository; the default `package.
 | Patrol routes            | **`GET` / `POST /api/patrol-routes`** under `auth:api` — append-only GPS breadcrumb rows (`patrol_routes`); FK **`patrol_session_id`**; **`GET`** supports filter `patrol_session_id`, sort `recorded_at` asc, pagination (`per_page` max **1000**, default **500**); **no** update/delete. **`POST`** optional **`patrol_log_id`** body alias merged to canonical session id before validation.                                                                                                                                                                                                                                                          |
 | Checkpoint events        | Full REST under `auth:api`; backend stores **validation context** per checkpoint visit (`entered_at`, `exited_at`, `detected_at`, `processed_at`, `detection_type`, `confidence_score`, `status`); pagination; filtering (`patrol_session_id`, `checkpoint_id`, `status`, `detection_type`); sorting by `detected_at` (`latest` / `oldest`). Authoritative scores come from **`POST …/validate`** (`PatrolValidationService`); PWA PATCH may still send provisional metadata during patrol. No foreign key to `location_logs`. No soft deletes. |
 | Checkpoint event metrics | Full REST under `auth:api`; one row per checkpoint event (unique `checkpoint_event_id`); scoring factors for explaining confidence; `calculated_confidence_score` returned via API resource only (not stored). No soft deletes.                                                                                                                                                                                                                                                    |
-| Location logs            | `index` / `store` / `show` / `destroy` under `auth:api` (**no** `update`; append-only rows). Pagination; filters `patrol_session_id`, `user_id`; default sort by device `timestamp` ascending; `server_received_at` set on create for sync-delay analysis. Not linked to checkpoints.                                                                                                                                                                                              |
+| Location logs            | `index` / `store` / `show` under `auth:api` (**no** `update` or `destroy`; immutable append-only raw evidence). Pagination; filters `patrol_session_id`, `user_id`; default sort by device `timestamp` ascending; `server_received_at` set on create for sync-delay analysis. Not linked to checkpoints. Deletion is intentionally unsupported (Milestone 13) to preserve audit integrity for patrol validation.                                                                                                                                                                                              |
 | PWA location sync        | **`POST /api/pwa/sync`** under `auth:api` — accepts queued **`location_log`** payloads (camelCase fields from the PWA client); stores rows in **`location_logs`** with client **`locationLogId`** as primary key for idempotent replay.                                                                                                                                                                                                                                            |
 | Cameras                  | Full REST under `auth:api`; CRUD camera records for ANPR/RTSP management with indexing on `is_active`, `ip_address`, and `last_seen_at`.                                                                                                                                                                                                                                                                                                                                           |
 | Vehicles                 | Full REST under `auth:api`; UUID records keyed by `plate_number` uniqueness with status/source enums for monitoring workflows.                                                                                                                                                                                                                                                                                                                                                     |
@@ -197,7 +198,7 @@ Important paths under `backend-laravel-v1` and their responsibilities:
 | `app/Events/Patrol/*`                                          | Six `ShouldBroadcastNow` events for admin patrol monitoring                                                                                                       |
 | `app/Http/Controllers/Api/CheckpointEventController.php`       | Checkpoint events CRUD + filters/sort + custom JSON envelope (`CheckpointEventResource`; UUID route-model binding)                                                |
 | `app/Http/Controllers/Api/CheckpointEventMetricController.php` | Checkpoint event metrics CRUD + pagination + custom JSON envelope (`CheckpointEventMetricResource`; UUID route-model binding)                                     |
-| `app/Http/Controllers/Api/LocationLogController.php`           | Location logs index/store/show/destroy + filters/sort + custom JSON envelope (`LocationLogResource`; UUID route-model binding; **no** update)                     |
+| `app/Http/Controllers/Api/LocationLogController.php`           | Location logs index/store/show + filters/sort + custom JSON envelope (`LocationLogResource`; UUID route-model binding; **no** update or destroy)                     |
 | `app/Http/Controllers/Api/PwaSyncController.php`               | **`POST /api/pwa/sync`** — idempotent **`location_log`** ingest from PWA queue (`SyncPwaLocationLogRequest` → `LocationLog` UUID PK = client **`locationLogId`**) |
 | `app/Http/Controllers/Api/CameraController.php`                | Cameras CRUD + form request validation + `Route::apiResource('cameras', ...)` under `auth:api`                                                                    |
 | `app/Http/Controllers/Api/VehicleController.php`               | Vehicles CRUD + inline validation + `Route::apiResource('vehicles', ...)` under `auth:api`                                                                        |
@@ -221,7 +222,7 @@ Endpoints **do not** all share one envelope:
 | Laravel `JsonResource` default: top-level `data`, optional `links`, `meta` for pagination | `UserController`, `RoleController`, `BlockchainRecordController`                                                                                                                                                                                                    |
 | Custom `{ "success", "message", "data" }`                                                 | `AuthController@login`, `ZoneController` actions, `CheckpointController` actions, `PatrolSessionController` actions, `PatrolRouteController@store`, `CheckpointEventController` actions, `CheckpointEventMetricController` actions, `LocationLogController` actions |
 | Plain `{ "message" }`                                                                     | `UserController@destroy`                                                                                                                                                                                                                                            |
-| **204 No Content**                                                                        | `ZoneController@destroy`, `CheckpointController@destroy`, `PatrolSessionController@destroy`, `CheckpointEventController@destroy`, `CheckpointEventMetricController@destroy`, `LocationLogController@destroy`                                                        |
+| **204 No Content**                                                                        | `ZoneController@destroy`, `CheckpointController@destroy`, `PatrolSessionController@destroy`, `CheckpointEventController@destroy`, `CheckpointEventMetricController@destroy`                                                        |
 
 Validation errors (FormRequest / `ValidationException`): typically **`422`** with `success: false`, `message: "Validation failed."`, `data.errors` — see `bootstrap/app.php` for JSON requests.
 
@@ -287,8 +288,8 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | POST      | `/api/pwa/sync`                                           | `PwaSyncController@sync`                  | —                     | Idempotent ingest from PWA **`sync_queue`** (`type: location_log`); client **`locationLogId`** maps to `location_logs.id`; **`patrolId`** maps to `patrol_session_id`; **`manual`** source stored as **`sync`** | `SyncPwaLocationLogRequest`                                                                                                                                                     | `{ success, message, data }` with **`LocationLog`** fields + **`duplicate`** boolean (**200** + **`duplicate: true`** on matching replay, **201** + **`duplicate: false`** on first insert, **409** if same id with mismatched payload, **422** on validation failure) |
 | POST      | `/api/push-subscriptions`                                 | `PushSubscriptionController@store`        | —                     | Register/update Web Push subscription (`endpoint`, `keys.p256dh`, `keys.auth`, optional `user_agent`); upserts by unique `endpoint`; sets `user_id` from JWT                                                    | `StorePushSubscriptionRequest`                                                                                                                                                  | `{ success, message, data }` with subscription `id` (**201**)                                                                                                                                                                                                          |
 | DELETE    | `/api/push-subscriptions/{push_subscription}`             | `PushSubscriptionController@destroy`      | —                     | Remove subscription by UUID; **403** if row belongs to another user                                                                                                                                             | —                                                                                                                                                                               | **204** empty body                                                                                                                                                                                                                                                     |
+| POST      | `/api/push-notifications/test`                            | `PushNotificationController@test`       | —                     | Send a test Web Push to the **authenticated user’s** stored subscriptions (development / PWA verification)                                                                                                        | Optional: `title`, `body`                                                                                                                                                       | `{ success, message, data }` — `data` includes delivery stats (`attempted`, `succeeded`, `failed`, `expired`, …). **503** if VAPID not configured; **422** if no subscriptions or invalid payload; **502** if all delivery attempts failed; **200** only when at least one subscription receives the push |
 | GET       | `/api/location-logs/{location_log}`                       | `LocationLogController@show`              | —                     | Show location log                                                                                                                                                                                               | Implicit UUID binding                                                                                                                                                           | `{ success, message, data }`                                                                                                                                                                                                                                           |
-| DELETE    | `/api/location-logs/{location_log}`                       | `LocationLogController@destroy`           | —                     | Permanent delete log row                                                                                                                                                                                        | —                                                                                                                                                                               | **204** empty body                                                                                                                                                                                                                                                     |
 | GET       | `/api/vehicles`                                           | `VehicleController@index`                 | —                     | List vehicles                                                                                                                                                                                                   | —                                                                                                                                                                               | `{ success, message, data }`                                                                                                                                                                                                                                           |
 | POST      | `/api/vehicles`                                           | `VehicleController@store`                 | —                     | Create vehicle                                                                                                                                                                                                  | Inline validation (`plate_number`, `owner_name`, `vehicle_type`, `status`, `source`, `notes`)                                                                                   | `{ success, message, data }` (**201**)                                                                                                                                                                                                                                 |
 | GET       | `/api/vehicles/{vehicle}`                                 | `VehicleController@show`                  | —                     | Show vehicle                                                                                                                                                                                                    | Implicit UUID binding                                                                                                                                                           | `{ success, message, data }`                                                                                                                                                                                                                                           |
@@ -342,7 +343,7 @@ Validation errors (FormRequest / `ValidationException`): typically **`422`** wit
 | `patrol_routes`            | `id` UUID   | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete); `latitude` / `longitude` decimal (`10`,`7`); nullable `accuracy`, `altitude` float; `recorded_at` timestamp (device/sample time); `created_at` only (**no** `updated_at`; append-only breadcrumbs); composite index (`patrol_session_id`,`recorded_at`).                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `checkpoint_events`        | `id` UUID   | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete), FK `checkpoint_id` (UUID) → `checkpoints` (cascade on delete); nullable timestamps `entered_at`, `exited_at`, `detected_at`, `processed_at`; `detection_type` enum (`continuous`,`resume`,`manual`, nullable); `confidence_score` float (default `0`, nullable on PATCH); `status` enum (`pending`,`verified`,`suspicious`,`uncertain`,`rejected`, default `pending`); indexes on `patrol_session_id`, `checkpoint_id`, `status`, `detected_at`, and composite (`patrol_session_id`,`checkpoint_id`). **No** soft deletes; **no** FK between `location_logs` and `checkpoint_events`. Full anomaly detection / blockchain linkage **not** implemented yet. |
 | `checkpoint_event_metrics` | `id` UUID   | FK `checkpoint_event_id` (UUID) → `checkpoint_events` (cascade on delete), **unique** `checkpoint_event_id`; scoring columns `distance_score`, `accuracy_score`, `time_score`, `stability_score` (decimal `5,2`, default `0`); `gap_factor`, `integrity_factor` (decimal `4,2`, defaults `1.00`); `created_at` only (**no** `updated_at`).                                                                                                                                                                                                                                                                                                                                                                                        |
-| `push_subscriptions`       | `id` UUID   | FK `user_id` (UUID) → `users` (nullable, null on delete); unique `endpoint` string(768) (MySQL-compatible unique index); `keys` JSON (`p256dh`, `auth`); nullable `user_agent`; nullable `last_used_at`; timestamps. **No** outbound Web Push sender in app code yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `push_subscriptions`       | `id` UUID   | FK `user_id` (UUID) → `users` (nullable, null on delete); unique `endpoint` string(768) (MySQL-compatible unique index); `keys` JSON (`p256dh`, `auth`); nullable `user_agent`; nullable `last_used_at`; timestamps. Outbound delivery via **`WebPushNotificationService`** (`minishlink/web-push`).                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `location_logs`            | `id` UUID   | FK `patrol_session_id` (UUID) → `patrol_sessions` (cascade on delete), FK `user_id` (UUID) → `users` (cascade on delete); `latitude` / `longitude` decimal (`10`,`7`); `accuracy` float; device `timestamp` unsigned bigint (milliseconds); nullable `server_received_at` (backend receive time); `source` enum (`live`,`resume`,`sync`); `tracking_state` enum (`active`,`resumed`,`offline`); nullable `speed`, `heading` float; `created_at` only (**no** `updated_at`; append-only). Composite indexes (`patrol_session_id`,`timestamp`), (`user_id`,`timestamp`); indexes on `source`, `tracking_state`. **No** FK to checkpoints.                                                                                           |
 | `anpr_events`              | `id` UUID   | FK `vehicle_id` (UUID) → `vehicles` (nullable, null on delete), FK `camera_id` (UUID) → `cameras` (restrict on delete), FK `blockchain_record_id` (UUID) → `blockchain_records` (nullable, null on delete); `plate_number` string(20); `confidence` decimal(`5`,`4`) default `0.0000`; required `detection_time`; booleans `is_flagged` default `false`, `is_valid` default `true`; nullable `latitude`/`longitude` decimal(`10`,`7`); indexes on `plate_number`, `detection_time`, `is_flagged`, `is_valid`, `camera_id`, `vehicle_id`, `blockchain_record_id`.                                                                                                                                                                  |
 | `anpr_images`              | `id` UUID   | FK `anpr_event_id` (UUID) → `anpr_events` (cascade on delete); `image_type` enum (`full`,`plate`,`annotated`); required `file_path` string(255); nullable `file_size` unsigned bigint, nullable `resolution` string(20), nullable `expires_at` timestamp; indexes on `anpr_event_id`, `image_type`, `expires_at`.                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -621,6 +622,36 @@ The `patrol_sessions` module is fully implemented and wired:
 
 **Response `data`:** `patrol_session_id`, `total_location_logs`, `total_segments`, `total_gaps`, `anomalies`, `checkpoint_results[]` (each with `checkpoint_id`, `checkpoint_name`, `detection_type`, `confidence_score`, `status`, component scores, `gap_factor`, `integrity_factor`).
 
+**`anomalies` object (non-destructive; legacy keys preserved):**
+
+| Key | Description |
+|-----|-------------|
+| `timestamp_issues` | `{ duplicate_ids[], invalid_ids[], out_of_order_ids[] }` — log IDs with timestamp integrity problems |
+| `segment_anomalies` | Map keyed by `segment_index` → `{ major, minor, speed_anomaly, gps_jump, low_accuracy, timestamp_issue }` (used by checkpoint integrity scoring) |
+| `gaps` | `{ previous_log_id, next_log_id, gap_seconds }[]` — gaps **> 30 s** between consecutive logs |
+| `items` | **Milestone 10** — flat list for map visualization (see below) |
+
+**`anomalies.items[]` fields (each suspicious movement segment or point):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable id for UI selection (e.g. `speed-{start_log_id}-{end_log_id}`) |
+| `type` | string | `speed_anomaly` \| `gps_jump` \| `poor_accuracy` \| `timestamp_issue` |
+| `severity` | string | `minor` \| `major` |
+| `message` | string | Human-readable explanation |
+| `start_log_id` | UUID | First `location_log` in the segment |
+| `end_log_id` | UUID | Last `location_log` in the segment |
+| `start_timestamp` | int \| null | Device timestamp (ms) at start |
+| `end_timestamp` | int \| null | Device timestamp (ms) at end |
+| `start_latitude` / `start_longitude` | float | Start coordinates |
+| `end_latitude` / `end_longitude` | float | End coordinates |
+| `distance_meters` | float? | Haversine distance (edge anomalies) |
+| `speed_mps` | float? | Effective speed used for detection |
+| `calculated_speed_mps` | float? | Distance ÷ Δt |
+| `reported_speed_mps` | float? | Device-reported speed when present |
+
+`PatrolValidationCompleted` broadcasts the full validation `data` object (including `anomalies.items`) to `private-patrol.monitoring` and `private-patrol.session.{id}`.
+
 #### Patrol session summary (Milestone 12)
 
 **Route:** `GET /api/patrol-sessions/{patrol_session}/summary` (JWT `auth:api`).
@@ -663,8 +694,10 @@ The `location_logs` module is implemented and wired:
 
 - Migration: `2026_05_07_161000_create_location_logs_table.php`
 - Model: `App\Models\LocationLog` (UUID primary key; client may supply `id` or the server generates one; `UPDATED_AT` disabled; **no** `HasFactory` / factory)
-- API: `LocationLogController` + `StoreLocationLogRequest` + `LocationLogResource` + `Route::apiResource('location-logs', ...)->only(['index','store','show','destroy'])` under `auth:api`
+- API: `LocationLogController` + `StoreLocationLogRequest` + `LocationLogResource` + `Route::apiResource('location-logs', ...)->only(['index','store','show'])` under `auth:api`
 - **No** seeder or factory
+
+**Immutability (Milestone 13):** `location_logs` are raw patrol evidence. Rows are append-only: **`POST /api/location-logs`**, **`POST /api/pwa/sync`**, and direct model inserts (tests/seeds) only. There is **no** HTTP `PUT`/`PATCH`/`DELETE` on this resource (`405 Method Not Allowed` on unsupported verbs). `PatrolValidationService` reads logs but does not mutate them. Patrol validation and gap analysis depend on this audit trail; blockchain anchoring is out of scope for this milestone.
 
 **API resource shape:** stored log fields (`latitude`, `longitude`, `accuracy`, device `timestamp`, `server_received_at`, `source`, `tracking_state`, `speed`, `heading`, `created_at`), optional nested `user` when loaded (`id`, `name`), optional nested `patrol_session` when loaded (`id`, `status`, `started_at`, `ended_at`). Timeline ordering for movement uses device **`timestamp`**, not `created_at`.
 
@@ -833,7 +866,43 @@ From `RoleSeeder`: **`Admin`**, **`Security Operator`**, **`Guard`**. Admin midd
 | `App\Services\PatrolSessionSummaryService` | Builds gap-aware patrol session summary for `GET /api/patrol-sessions/{patrol_session}/summary` from `location_logs` and `checkpoint_events` (read-only aggregation). |
 | `App\Services\PatrolValidationService`     | Milestone 1 validation engine for `POST /api/patrol-sessions/{patrol_session}/validate`: gap/segment reconstruction, checkpoint detection, confidence scoring, persists `checkpoint_events` + `checkpoint_event_metrics`. |
 
-**Push subscriptions (Milestone 15):** `push_subscriptions` table stores Web Push endpoints + keys for PWA clients. **`POST /api/push-subscriptions`** upserts by `endpoint`; **`DELETE /api/push-subscriptions/{id}`** removes a row. **No** server-side push sending yet.
+**Push subscriptions (Milestone 15) + outbound push (Milestone 9):** `push_subscriptions` stores Web Push endpoints + keys. **`POST /api/push-subscriptions`** upserts by `endpoint`; **`DELETE /api/push-subscriptions/{id}`** removes a row.
+
+**Web Push services:**
+
+| Class | Role |
+|-------|------|
+| `WebPushNotificationService` | Low-level sender (`minishlink/web-push`): `sendToUser`, `sendToAdmins`, `sendToRole`, `sendToSubscription`. Returns **`WebPushDeliveryResult`** aggregates (`attempted`, `succeeded`, `failed`, `expired`, …). Logs successful sends, delivery failures, expired subscriptions (HTTP **410** / **404**), and payload validation issues. Payload shape: `title`, `body`, `icon`, `badge`, `url`, `tag`, `data`. |
+| `WebPushDeliveryResult` | Value object aggregating per-subscription Web Push outcomes; exposed on the test endpoint via `data`. |
+| `PatrolPushNotificationService` | Patrol-domain payloads; called from `PatrolBroadcastService` alongside Reverb events. Swallows push errors so patrol APIs never fail because of notification delivery. |
+
+**Environment (`.env`):**
+
+| Variable | Purpose |
+|----------|---------|
+| `VAPID_PUBLIC_KEY` | Must match frontend `VITE_VAPID_PUBLIC_KEY` |
+| `VAPID_PRIVATE_KEY` | Server only — never expose to the SPA |
+| `VAPID_SUBJECT` | Contact URI (defaults to `APP_URL`) |
+
+Config file: `config/webpush.php`.
+
+**Delivery mode:** Synchronous inside the HTTP request (wrapped in `try/catch` so patrol/validation APIs never fail because of push). `QUEUE_CONNECTION=database` is set in `.env.example`, but **no `jobs` migration** ships with this repo yet — queue-based push is **not** required for Milestone 9.
+
+**Failed subscriptions:** HTTP **410** / **404** from the push endpoint deletes the `push_subscriptions` row automatically.
+
+**Notification triggers (via `PatrolBroadcastService` → `PatrolPushNotificationService`):**
+
+| Event | Recipients | Deep link |
+|-------|------------|-----------|
+| Patrol **completed** | Admin + Security Operator | `/admin/patrol-monitoring/{patrolSessionId}` |
+| Patrol **aborted** | Admin + Security Operator | same |
+| Checkpoint **suspicious** / **uncertain** (status change on create/update) | Admin + Security Operator | same |
+| **Validation completed** (`POST …/validate`) | Admin + Security Operator | same (body includes verified/suspicious/uncertain/rejected counts) |
+| Checkpoint(s) **rejected** after validation | Patrol guard (`user_id` on session) | `/patrol` |
+
+Reverb WebSocket broadcasts remain unchanged; push is complementary.
+
+**Test endpoint:** `POST /api/push-notifications/test` — JWT required; sends only to the current user’s subscriptions. Response `success` is **true** only when at least one subscription is delivered; partial multi-device failures still return **200** with counts in `data`.
 
 ### Business rules (from controllers/models)
 
@@ -845,7 +914,7 @@ From `RoleSeeder`: **`Admin`**, **`Security Operator`**, **`Guard`**. Admin midd
 | Patrol sessions          | Session lifecycle tracking by user + zone with optional blockchain linkage; filterable/sortable index; hard delete (`forceDelete`); **`summary`** computes read-only gaps + completion; **`validate`** runs full backend validation and persists checkpoint results                                                                                                      |
 | Checkpoint events        | Links a patrol session to a checkpoint with detection metadata; filterable/sortable index; permanent delete via `delete()` (no soft-delete trait)                                                                                                                                                                            |
 | Checkpoint event metrics | At most one metric row per checkpoint event (`checkpoint_event_id` unique); permanent delete via `delete()` (no soft-delete trait); confidence breakdown scores persisted, composite score exposed only via API resource                                                                                                     |
-| Location logs            | Append-only ingest (`store` inserts only; **no** HTTP update); optional client UUID or server-generated `id`; `server_received_at` set on create; index listing filters by patrol session and user; permanent delete via `delete()` (same access pattern as other JWT-protected resources; **no** dedicated admin-only gate) |
+| Location logs            | Immutable append-only evidence: `store` and PWA sync insert only; **no** HTTP update or delete; optional client UUID or server-generated `id`; `server_received_at` set on create; index listing filters by patrol session and user; `PatrolValidationService` is read-only on this table |
 | Cameras                  | CRUD camera records via API under `auth:api`; UUID PK with model-side UUID generation; indexed for querying by activity/network/last-seen time                                                                                                                                                                               |
 | Vehicles                 | CRUD vehicle records via API under `auth:api`; `plate_number` is unique; `status` and `source` are enum-constrained in migration and controller validation                                                                                                                                                                   |
 | ANPR events              | CRUD ANPR detections via API under `auth:api`; requires valid `camera_id`; supports nullable `vehicle_id` and nullable `blockchain_record_id`; validates confidence/time/coordinates; permanent delete via `delete()`                                                                                                        |
@@ -874,7 +943,7 @@ Unable to determine from current implementation — **no** application-level `sc
 - **Patrol session lifecycle:** Authenticated users can CRUD patrol sessions with user/zone/blockchain-record eager loading, index filtering/sort, and `204` hard delete response. **`GET …/summary`** returns a computed gap-aware summary without persisting a summary row. **`POST …/validate`** runs `PatrolValidationService` and upserts authoritative checkpoint events + metrics.
 - **Checkpoint events lifecycle:** Authenticated users can CRUD checkpoint events with `patrolSession` / `checkpoint` / `metric` eager loading, index filtering/sort by `detected_at`, `201` on create, and `204` empty response on delete.
 - **Checkpoint event metrics lifecycle:** Authenticated users can CRUD checkpoint event metrics with `checkpointEvent` eager loading, paginated index (`per_page`), `201` on create, and `204` empty response on delete.
-- **Location logs lifecycle:** Authenticated users can list/filter (`patrol_session_id`, `user_id`), create single-row logs (`201`), show (`LocationLogResource`), and delete (`204`). Rows are not updated after creation.
+- **Location logs lifecycle:** Authenticated users can list/filter (`patrol_session_id`, `user_id`), create single-row logs (`201`), and show (`LocationLogResource`). Rows are never updated or deleted via API after creation (raw evidence integrity).
 - **Cameras lifecycle:** Authenticated users can CRUD cameras via REST endpoints under `auth:api`; delete returns `204`.
 - **Vehicles lifecycle:** Authenticated users can CRUD vehicles with inline validation, including unique `plate_number` and constrained `status`/`source`; delete returns `204`.
 - **ANPR events lifecycle:** Authenticated users can CRUD ANPR events with eager loading of `vehicle`/`camera` and optional `images`/`logs` when tables exist; paginated index (`per_page`), `201` on create, and `204` empty response on delete.
@@ -982,7 +1051,7 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 
 - **Web server** or `php artisan serve` for HTTP.
 - **Database** per `DB_CONNECTION`.
-- If using **database** queue/session/cache: ensure **tables exist** (see [§8](#8-configuration) / [§12](#12-known-issues--technical-debt)).
+- If using **database** queue/session/cache: ensure **tables exist** (see [§8](#8-configuration) / [§13](#13-known-issues--technical-debt)).
 
 ### Queue workers
 
@@ -1014,7 +1083,56 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 
 ---
 
-## 12. Known issues / technical debt
+## 12. Automated test coverage
+
+The backend test suite guards patrol validation, PWA sync, summaries, metrics, routes, broadcasting, Web Push safety, and authorization. Run all tests:
+
+```bash
+php artisan test
+```
+
+**Environment (from `phpunit.xml`):** `APP_ENV=testing`, SQLite in-memory database, `BROADCAST_CONNECTION=null`, `QUEUE_CONNECTION=sync`. **No** Reverb server, queue worker, or outbound Web Push network calls are required.
+
+**External I/O:** Reverb events are asserted with `Event::fake()` where needed; `PatrolBroadcastService` is exercised with `broadcasting.default` set to `null` (disabled) or `reverb` (enabled) via `Config::set`. Web Push uses **Mockery** doubles of `WebPushNotificationService` — VAPID private keys are not used in tests.
+
+### Feature tests (`tests/Feature/`)
+
+| File | Verifies |
+|------|----------|
+| `PwaSyncTest.php` | JWT sync of `location_log`; 401 unauthenticated; duplicate replay (`duplicate: true`); 409 payload conflict; 422 invalid lat/lng and invalid `patrolId`; `manual` → stored `sync`; `server_received_at` set |
+| `PatrolValidationTest.php` | Continuous dwell ≥ 3s → verified (≥ 80); short stay → rejected/uncertain; resume → uncertain (≤ 79); gap reduces `gap_factor`; `speed_anomaly` / `gps_jump` / `poor_accuracy` in `anomalies.items`; metrics upsert; re-validation updates same event; HTTP validate envelope + auth |
+| `PatrolSummaryTest.php` | Checkpoint counts, `completion_percentage`, gaps > 30s, confidence penalties (pending/rejected/suspicious), empty logs, summary auth + JSON envelope |
+| `CheckpointEventMetricTest.php` | Create metric; unique `checkpoint_event_id`; `calculated_confidence_score` in resource; cascade delete with checkpoint event |
+| `PatrolRouteTest.php` | Create breadcrumb; filter by `patrol_session_id`; `recorded_at` ascending; `per_page` max 1000; no PUT/DELETE routes (404); `patrol_log_id` alias |
+| `PatrolBroadcastTest.php` | `PatrolSessionStarted` when broadcasting enabled; route/validate/checkpoint flows succeed with broadcasting disabled (no thrown errors) |
+| `WebPushNotificationTest.php` | Test push requires auth; 503 when VAPID not configured; 422 when no subscriptions; patrol completion survives push exceptions; subscription delete |
+| `AuthorizationTest.php` | Admin `GET /users`; guard forbidden; security operator patrol/summary/routes access; unauthenticated patrol endpoints rejected |
+| `LocationLogTest.php` | Guard / Security Operator / Admin cannot `DELETE` location logs (`405`); no `PUT`/`PATCH`; create via `POST /location-logs`; PWA sync insert; validation still runs after hardening |
+
+### Unit tests (`tests/Unit/`)
+
+| File | Verifies |
+|------|----------|
+| `PatrolSessionSummaryServiceTest.php` | `confidence_level` thresholds; confidence score clamping |
+
+### Test helpers
+
+| Path | Role |
+|------|------|
+| `tests/Concerns/CreatesPatrolUsers.php` | Admin / Guard / Security Operator users after `RoleSeeder` |
+| `tests/Concerns/CreatesPatrolFixtures.php` | Zone + checkpoint + patrol context; `seedLocationLogs()` helper |
+
+### Factories
+
+Uses `RefreshDatabase` + `RoleSeeder`. Factories: `UserFactory`, `ZoneFactory`, `CheckpointFactory`, `PatrolSessionFactory`, `CheckpointEventFactory` (explicit UUID `id`), `CheckpointEventMetricFactory`, **`PatrolRouteFactory`** (added for route tests).
+
+### Validation engine regression
+
+`PatrolValidationTest` is the primary regression suite for `PatrolValidationService` (gaps, segments, checkpoint scoring, anomaly `items`, persistence). Run after any change to validation or anomaly visualization payloads.
+
+---
+
+## 13. Known issues / technical debt
 
 ### Security & access control
 
@@ -1052,4 +1170,4 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 
 ---
 
-_Generated from repository analysis. Recent patrol/PWA additions: **Laravel Reverb realtime** (`App\Events\Patrol\*`, `PatrolBroadcastService`), **`patrol_routes`** table + **`GET` / `POST /api/patrol-routes`**, **`POST /api/pwa/sync`** (**`PwaSyncController`** / **`SyncPwaLocationLogRequest`**), checkpoint event **validation context** on **`checkpoint_events`** (Milestone 10), **`GET /api/patrol-sessions/{id}/summary`** (**`PatrolSessionSummaryService`** — Milestone 12). Update this file when routes, schema, or auth boundaries change._
+_Generated from repository analysis. Recent additions: **automated test suite expansion** ([§12](#12-automated-test-coverage)), **Laravel Reverb realtime** (`App\Events\Patrol\*`, `PatrolBroadcastService`), **`patrol_routes`** + **`PatrolRouteFactory`**, **`POST /api/pwa/sync`**, validation **`anomalies.items`** (map visualization), **`GET /api/patrol-sessions/{id}/summary`**. Update this file when routes, schema, auth, or tests change._

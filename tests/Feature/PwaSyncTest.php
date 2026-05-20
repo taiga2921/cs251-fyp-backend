@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\LocationLog;
 use App\Models\PatrolSession;
 use App\Models\User;
+use Carbon\Carbon;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -18,6 +19,68 @@ class PwaSyncTest extends TestCase
     {
         parent::setUp();
         $this->seed(RoleSeeder::class);
+    }
+
+    public function test_authenticated_user_can_sync_valid_location_log(): void
+    {
+        Carbon::setTestNow('2026-05-20 10:00:00');
+        [$user, $patrol] = $this->createPatrolContext();
+        $locationLogId = (string) Str::uuid();
+        $payload = $this->validPayload($locationLogId, $user, $patrol);
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', $payload)
+            ->assertCreated()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.duplicate', false);
+
+        $log = LocationLog::query()->findOrFail($locationLogId);
+        $this->assertSame($patrol->id, $log->patrol_session_id);
+        $this->assertNotNull($log->server_received_at);
+        Carbon::setTestNow();
+    }
+
+    public function test_unauthenticated_sync_is_rejected(): void
+    {
+        [$user, $patrol] = $this->createPatrolContext();
+
+        $this->postJson('/api/pwa/sync', $this->validPayload((string) Str::uuid(), $user, $patrol))
+            ->assertUnauthorized();
+    }
+
+    public function test_invalid_patrol_id_returns_422(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', [
+                'type' => 'location_log',
+                'locationLogId' => (string) Str::uuid(),
+                'patrolId' => (string) Str::uuid(),
+                'userId' => $user->id,
+                'timestamp' => now()->getTimestampMs(),
+                'lat' => 3.139,
+                'lng' => 101.6869,
+                'source' => 'live',
+                'trackingState' => 'active',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_manual_source_is_stored_as_sync(): void
+    {
+        [$user, $patrol] = $this->createPatrolContext();
+        $locationLogId = (string) Str::uuid();
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', array_merge(
+                $this->validPayload($locationLogId, $user, $patrol),
+                ['source' => 'manual']
+            ))
+            ->assertCreated();
+
+        $this->assertSame('sync', LocationLog::query()->findOrFail($locationLogId)->source);
     }
 
     public function test_duplicate_replay_returns_success_with_duplicate_flag(): void

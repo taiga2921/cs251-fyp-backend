@@ -8,7 +8,6 @@ use App\Http\Resources\LocationLogResource;
 use App\Models\LocationLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Throwable;
@@ -105,17 +104,6 @@ class LocationLogController extends Controller
                 'message' => 'Location log retrieved successfully.',
                 'data' => (new LocationLogResource($locationLog))->resolve(),
             ], 200);
-        } catch (Throwable $e) {
-            return $this->errorResponse($e);
-        }
-    }
-
-    public function destroy(LocationLog $locationLog): JsonResponse|Response
-    {
-        try {
-            $locationLog->delete();
-
-            return response()->noContent();
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }

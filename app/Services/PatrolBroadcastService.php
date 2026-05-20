@@ -16,6 +16,10 @@ use App\Models\PatrolSession;
 
 class PatrolBroadcastService
 {
+    public function __construct(
+        protected PatrolPushNotificationService $pushNotifications,
+    ) {}
+
     public function sessionStarted(PatrolSession $session): void
     {
         if (! $this->shouldBroadcast()) {
@@ -32,17 +36,17 @@ class PatrolBroadcastService
 
     public function sessionCompleted(PatrolSession $session): void
     {
-        if (! $this->shouldBroadcast()) {
-            return;
+        if ($this->shouldBroadcast()) {
+            $session->loadMissing(['user', 'zone', 'blockchainRecord']);
+
+            PatrolSessionCompleted::dispatch(
+                (string) $session->id,
+                (string) $session->status,
+                (new PatrolSessionResource($session))->resolve(),
+            );
         }
 
-        $session->loadMissing(['user', 'zone', 'blockchainRecord']);
-
-        PatrolSessionCompleted::dispatch(
-            (string) $session->id,
-            (string) $session->status,
-            (new PatrolSessionResource($session))->resolve(),
-        );
+        $this->pushNotifications->sessionCompleted($session);
     }
 
     public function routeUpdated(PatrolRoute $route): void
@@ -61,21 +65,21 @@ class PatrolBroadcastService
         );
     }
 
-    public function checkpointUpdated(CheckpointEvent $checkpointEvent): void
+    public function checkpointUpdated(CheckpointEvent $checkpointEvent, ?string $previousStatus = null): void
     {
-        if (! $this->shouldBroadcast()) {
-            return;
-        }
-
         $checkpointEvent->loadMissing(['checkpoint', 'patrolSession']);
         $payload = $this->checkpointPayload($checkpointEvent);
         $status = strtolower((string) $checkpointEvent->status);
 
-        if ($status === 'verified') {
-            PatrolCheckpointVerified::dispatch((string) $checkpointEvent->patrol_session_id, $payload);
-        } elseif (in_array($status, ['suspicious', 'uncertain'], true)) {
-            PatrolCheckpointSuspicious::dispatch((string) $checkpointEvent->patrol_session_id, $payload);
+        if ($this->shouldBroadcast()) {
+            if ($status === 'verified') {
+                PatrolCheckpointVerified::dispatch((string) $checkpointEvent->patrol_session_id, $payload);
+            } elseif (in_array($status, ['suspicious', 'uncertain'], true)) {
+                PatrolCheckpointSuspicious::dispatch((string) $checkpointEvent->patrol_session_id, $payload);
+            }
         }
+
+        $this->pushNotifications->checkpointStatusAlert($checkpointEvent, $previousStatus);
     }
 
     /**
@@ -83,14 +87,14 @@ class PatrolBroadcastService
      */
     public function validationCompleted(PatrolSession $session, array $validationResult): void
     {
-        if (! $this->shouldBroadcast()) {
-            return;
+        if ($this->shouldBroadcast()) {
+            PatrolValidationCompleted::dispatch(
+                (string) $session->id,
+                $validationResult,
+            );
         }
 
-        PatrolValidationCompleted::dispatch(
-            (string) $session->id,
-            $validationResult,
-        );
+        $this->pushNotifications->validationCompleted($session, $validationResult);
     }
 
     /**
