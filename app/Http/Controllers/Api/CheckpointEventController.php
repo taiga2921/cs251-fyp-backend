@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreCheckpointEventRequest;
 use App\Http\Requests\UpdateCheckpointEventRequest;
@@ -16,6 +17,8 @@ use Throwable;
 
 class CheckpointEventController extends Controller
 {
+    use AuthorizesPatrolMonitoring;
+
     /**
      * @return list<string>
      */
@@ -26,6 +29,8 @@ class CheckpointEventController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorizePatrolMonitoring();
+
         try {
             $validator = Validator::make($request->all(), [
                 'patrol_session_id' => ['sometimes', 'uuid', 'exists:patrol_sessions,id'],

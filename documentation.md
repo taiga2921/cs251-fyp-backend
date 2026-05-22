@@ -750,7 +750,7 @@ The `**patrol_routes**` module is implemented for GPS breadcrumb append-only sto
 | Item       | Detail                                                                                                                                                                                                                                   |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Auth       | `**POST /api/broadcasting/auth**` inside `**auth:api**` — SPA sends JWT `Authorization: Bearer …`                                                                                                                                        |
-| Channels   | `**private-patrol.monitoring**`, `**private-patrol.session.{patrolSessionId}**` — **Admin** role only (`App\Support\PatrolChannelAuthorizer`)                                                                                            |
+| Channels   | `**private-patrol.monitoring**`, `**private-patrol.session.{patrolSessionId}**` — **Admin** and **Security Operator** (`App\Support\PatrolChannelAuthorizer::canAccessPatrolMonitoring`)                                                                                            |
 | Dispatcher | `**App\Services\PatrolBroadcastService`** — no-op when `BROADCAST_CONNECTION` is `null` or `log`                                                                                                                                         |
 | Events     | `PatrolSessionStarted`, `PatrolSessionCompleted`, `PatrolCheckpointVerified`, `PatrolCheckpointSuspicious` (`suspicious` + `uncertain`), `PatrolRouteUpdated`, `PatrolValidationCompleted` (`App\Events\Patrol\*`, `ShouldBroadcastNow`) |
 
@@ -881,6 +881,7 @@ The `anpr_event_logs` module is implemented and wired:
 | Mechanism                                  | Behavior                                                                                             |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | `EnsureUserIsAdmin`                        | Loads `role`; allows action only if role name is `Admin` (case-insensitive); otherwise **403** JSON. |
+| `PatrolChannelAuthorizer::canAccessPatrolMonitoring` | **Admin** or **Security Operator** — used for Reverb channels and `AuthorizesPatrolMonitoring` on monitoring list endpoints (`GET` patrol-sessions index/show, `GET` patrol-routes, `GET` checkpoint-events). Guard patrol flows still use `POST`/`PUT` patrol-sessions, `GET` summary, `POST` validate, `POST` patrol-routes. |
 | Laravel Policies / Gates                   | **Not implemented** (no policy classes).                                                             |
 | Route middleware on users/roles/blockchain | All are now under `auth:api`; users and roles are additionally restricted by `admin` middleware.     |
 

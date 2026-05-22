@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StorePatrolSessionRequest;
 use App\Http\Requests\UpdatePatrolSessionRequest;
@@ -18,8 +19,12 @@ use Throwable;
 
 class PatrolSessionController extends Controller
 {
+    use AuthorizesPatrolMonitoring;
+
     public function index(Request $request): JsonResponse
     {
+        $this->authorizePatrolMonitoring();
+
         try {
             $validator = Validator::make($request->all(), [
                 'user_id' => ['sometimes', 'exists:users,id'],
@@ -94,6 +99,8 @@ class PatrolSessionController extends Controller
 
     public function show(PatrolSession $patrolSession): JsonResponse
     {
+        $this->authorizePatrolMonitoring();
+
         try {
             $patrolSession->load(['user', 'zone', 'blockchainRecord']);
 

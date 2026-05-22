@@ -44,6 +44,10 @@ class AuthorizationTest extends TestCase
         $patrol = PatrolSession::factory()->create();
 
         $this->actingAs($operator, 'api')
+            ->getJson('/api/patrol-sessions')
+            ->assertOk();
+
+        $this->actingAs($operator, 'api')
             ->getJson('/api/patrol-sessions/'.$patrol->id)
             ->assertOk();
 
@@ -53,6 +57,46 @@ class AuthorizationTest extends TestCase
 
         $this->actingAs($operator, 'api')
             ->getJson('/api/patrol-routes?patrol_session_id='.$patrol->id)
+            ->assertOk();
+    }
+
+    public function test_guard_cannot_access_patrol_monitoring_list_endpoints(): void
+    {
+        $guard = $this->guardUser();
+        $patrol = PatrolSession::factory()->create();
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/patrol-sessions')
+            ->assertForbidden()
+            ->assertJsonPath(
+                'message',
+                'Only administrators and security operators may perform this action.'
+            );
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/patrol-sessions/'.$patrol->id)
+            ->assertForbidden();
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/patrol-routes?patrol_session_id='.$patrol->id)
+            ->assertForbidden();
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/checkpoint-events?patrol_session_id='.$patrol->id)
+            ->assertForbidden();
+    }
+
+    public function test_guard_can_still_use_patrol_session_summary_and_validate(): void
+    {
+        $guard = $this->guardUser();
+        $patrol = PatrolSession::factory()->create(['user_id' => $guard->id]);
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/patrol-sessions/'.$patrol->id.'/summary')
+            ->assertOk();
+
+        $this->actingAs($guard, 'api')
+            ->postJson('/api/patrol-sessions/'.$patrol->id.'/validate')
             ->assertOk();
     }
 

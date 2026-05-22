@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StorePatrolRouteRequest;
 use App\Http\Resources\PatrolRouteResource;
@@ -15,8 +16,12 @@ use Throwable;
 
 class PatrolRouteController extends Controller
 {
+    use AuthorizesPatrolMonitoring;
+
     public function index(Request $request): JsonResponse
     {
+        $this->authorizePatrolMonitoring();
+
         try {
             $validator = Validator::make($request->all(), [
                 'patrol_session_id' => ['sometimes', 'uuid', 'exists:patrol_sessions,id'],
