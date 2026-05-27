@@ -53,7 +53,7 @@ There is no separate SPA or mobile app in this repository; the default `package.
 | Users                    | CRUD via API resources; optional `only_trashed` / `include_trashed` on index; soft delete; restore endpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Roles                    | Read-only listing and show (no create/update/delete routes).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Auth                     | Email/password login returns JWT (`access_token`, `token_type`, `expires_in`) plus authenticated `user` and `role`; authenticated clients can call `auth/me` and `auth/logout`.                                                                                                                                                                                                                                                                                                                                                                 |
-| Zones                    | Full REST under `auth:api`; create/update/delete require role name exactly `**Admin`**; responses include `checkpoint_count` derived from related checkpoints.                                                                                                                                                                                                                                                                                                                                                                                  |
+| Zones                    | Full REST under `auth:api`; create/update/delete require role name exactly `**Admin`**; responses include `checkpoints_count` derived from related checkpoints.                                                                                                                                                                                                                                                                                                                                                                                  |
 | Checkpoints              | Full REST under `auth:api`; supports pagination, filtering (`zone_id`, `is_active`, `location_type`), and name search.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Patrol sessions          | Full REST under `auth:api`; supports pagination, filtering (`user_id`, `zone_id`, `status`), and sorting by `started_at`. `**GET /api/patrol-sessions/{id}/summary**` returns a gap-aware computed summary (not persisted). `**POST /api/patrol-sessions/{id}/validate**` runs the backend validation engine (Milestone 1): reconstructs movement from `location_logs`, scores checkpoints, persists `checkpoint_events` + `checkpoint_event_metrics`.                                                                                          |
 | Patrol routes            | `**GET` / `POST /api/patrol-routes**` under `auth:api` — append-only GPS breadcrumb rows (`patrol_routes`); FK `**patrol_session_id**`; `**GET**` supports filter `patrol_session_id`, sort `recorded_at` asc, pagination (`per_page` max **1000**, default **500**); **no** update/delete. `**POST`** optional `**patrol_log_id**` body alias merged to canonical session id before validation.                                                                                                                                                |
@@ -267,9 +267,9 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`** wit
 | PUT/PATCH | `/api/users/{user}`                                       | `UserController@update`                   | `admin`               | Update user (admin-only)                                                                                                                                                                                        | `UpdateUserRequest`                                                                                                                                                             | `UserResource`                                                                                                                                                                                                                                                                                            |
 | DELETE    | `/api/users/{user}`                                       | `UserController@destroy`                  | `admin`               | Soft delete user (admin-only)                                                                                                                                                                                   | —                                                                                                                                                                               | `{ "message": "User deleted successfully." }`                                                                                                                                                                                                                                                             |
 | POST      | `/api/users/{user}/restore`                               | `UserController@restore`                  | `admin`               | Restore soft-deleted user (admin-only)                                                                                                                                                                          | —                                                                                                                                                                               | `UserResource`                                                                                                                                                                                                                                                                                            |
-| GET       | `/api/zones`                                              | `ZoneController@index`                    | —                     | List/search/sort zones                                                                                                                                                                                          | Inline query: `search`, `sort`, `per_page`, `page`                                                                                                                              | `{ success, message, data }` with paginated resource payload inside `data` (each zone includes `checkpoint_count`)                                                                                                                                                                                        |
+| GET       | `/api/zones`                                              | `ZoneController@index`                    | —                     | List/search/sort zones                                                                                                                                                                                          | Inline query: `search`, `sort`, `per_page`, `page`                                                                                                                              | `{ success, message, data }` with paginated resource payload inside `data` (each zone includes `checkpoints_count`)                                                                                                                                                                                        |
 | POST      | `/api/zones`                                              | `ZoneController@store`                    | `EnsureUserIsAdmin`   | Create zone                                                                                                                                                                                                     | `StoreZoneRequest`                                                                                                                                                              | `{ success, message, data }`                                                                                                                                                                                                                                                                              |
-| GET       | `/api/zones/{zone}`                                       | `ZoneController@show`                     | —                     | Show zone                                                                                                                                                                                                       | —                                                                                                                                                                               | `{ success, message, data }` (zone includes `checkpoint_count`)                                                                                                                                                                                                                                           |
+| GET       | `/api/zones/{zone}`                                       | `ZoneController@show`                     | —                     | Show zone                                                                                                                                                                                                       | —                                                                                                                                                                               | `{ success, message, data }` (zone includes `checkpoints_count`)                                                                                                                                                                                                                                           |
 | PUT/PATCH | `/api/zones/{zone}`                                       | `ZoneController@update`                   | `EnsureUserIsAdmin`   | Update zone                                                                                                                                                                                                     | `UpdateZoneRequest`                                                                                                                                                             | `{ success, message, data }`                                                                                                                                                                                                                                                                              |
 | DELETE    | `/api/zones/{zone}`                                       | `ZoneController@destroy`                  | `EnsureUserIsAdmin`   | Delete zone                                                                                                                                                                                                     | —                                                                                                                                                                               | **204** empty body                                                                                                                                                                                                                                                                                        |
 | GET       | `/api/cameras`                                            | `CameraController@index`                  | —                     | List cameras                                                                                                                                                                                                    | —                                                                                                                                                                               | Custom `{ success, message, data }` JSON                                                                                                                                                                                                                                                                  |
@@ -593,6 +593,86 @@ erDiagram
 
 
 
+### Zone schema and API status
+
+The `zones` table and REST API align with migration `2026_05_07_010225_create_zones_table.php`.
+
+**Database columns (`zones`):**
+
+| Column        | Type              | Constraints                                      |
+| ------------- | ----------------- | ------------------------------------------------ |
+| `id`          | UUID              | Primary key                                      |
+| `name`        | string(255)       | Unique                                           |
+| `description` | text              | Nullable                                         |
+| `created_by`  | UUID FK → `users` | Nullable; `nullOnDelete`                         |
+| `created_at`  | timestamp         |                                                  |
+| `updated_at`  | timestamp         |                                                  |
+
+**Relationships:** `creator` (belongsTo `User` via `created_by`); `checkpoints` (hasMany `Checkpoint`).
+
+**Endpoints** (all under `auth:api`; `store` / `update` / `destroy` also require `EnsureUserIsAdmin`):
+
+| Method   | Path                 | Notes                                                                 |
+| -------- | -------------------- | --------------------------------------------------------------------- |
+| `GET`    | `/api/zones`         | Query: `search`, `sort` (`latest` \| `oldest`), `per_page`, `page`    |
+| `POST`   | `/api/zones`         | Body validated by `StoreZoneRequest`                                  |
+| `GET`    | `/api/zones/{zone}`  | Route-model binding on UUID                                           |
+| `PATCH`  | `/api/zones/{zone}`  | Body validated by `UpdateZoneRequest`                                 |
+| `DELETE` | `/api/zones/{zone}`  | **204** empty body                                                    |
+
+**Create / update request body:**
+
+```json
+{
+  "name": "Main Entrance",
+  "description": "Primary public access point.",
+  "created_by": "optional-user-uuid"
+}
+```
+
+- `name`: required, string, max 255, unique on `zones.name` (ignored on update for current row).
+- `description`: optional, string, max 1000.
+- `created_by`: optional, must exist in `users.id` when provided.
+
+**Single-zone response (`ZoneResource` inside `{ success, message, data }`):**
+
+```json
+{
+  "success": true,
+  "message": "Zone retrieved successfully.",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Main Entrance",
+    "description": "Primary public access point.",
+    "checkpoints_count": 3,
+    "created_at": "2026-05-07T10:00:00.000000Z",
+    "updated_at": "2026-05-07T10:00:00.000000Z",
+    "creator": {
+      "id": "user-uuid",
+      "name": "Admin User"
+    }
+  }
+}
+```
+
+`creator` is `null` when `created_by` is null. List (`GET /api/zones`) returns the same zone shape inside Laravel pagination: `data.data[]`, `data.meta`, `data.links`.
+
+**Validation error (422):**
+
+```json
+{
+  "success": false,
+  "message": "Validation failed.",
+  "data": {
+    "errors": {
+      "name": ["The name has already been taken."]
+    }
+  }
+}
+```
+
+**Implementation files:** `Zone` model, `ZoneController`, `StoreZoneRequest`, `UpdateZoneRequest`, `ZoneResource`, `ZoneFactory`, `ZoneSeeder`.
+
 ### Checkpoint schema and API status
 
 The `checkpoints` module is fully implemented and wired:
@@ -601,6 +681,8 @@ The `checkpoints` module is fully implemented and wired:
 - Model: `App\Models\Checkpoint`
 - API: `CheckpointController` + requests/resources + `Route::apiResource('checkpoints', ...)` under `auth:api`
 - Seeding: `CheckpointFactory`, `CheckpointSeeder`, and `DatabaseSeeder` call chain
+
+**`location_type` column:** DB enum `outdoor` \| `indoor` (default `outdoor`). Create/update validation in `StoreCheckpointRequest` / `UpdateCheckpointRequest`: `Rule::in(['outdoor', 'indoor'])`. Index filter query param `location_type` accepts the same two values.
 
 ### Patrol session schema and API status
 
@@ -983,7 +1065,7 @@ Unable to determine from current implementation — **no** application-level `sc
 ### Core workflows
 
 - **User lifecycle:** CRUD + soft delete + restore via `UserController`; passwords hashed via model cast on `User`.
-- **Zone lifecycle:** Authenticated users read; admins mutate; responses wrapped with `success` / `message` in `ZoneController`; zone payloads include `checkpoint_count` via `checkpoints` relationship counting.
+- **Zone lifecycle:** Authenticated users read; admins mutate; responses wrapped with `success` / `message` in `ZoneController`; zone payloads include `checkpoints_count` via `checkpoints` relationship counting.
 - **Checkpoint lifecycle:** Authenticated users can CRUD checkpoints with zone eager loading, index filtering/search, and `204` hard delete response.
 - **Patrol session lifecycle:** Authenticated users can CRUD patrol sessions with user/zone/blockchain-record eager loading, index filtering/sort, and `204` hard delete response. `**GET …/summary`** returns a computed gap-aware summary without persisting a summary row. `**POST …/validate**` runs `PatrolValidationService` and upserts authoritative checkpoint events + metrics.
 - **Checkpoint events lifecycle:** Authenticated users can CRUD checkpoint events with `patrolSession` / `checkpoint` / `metric` eager loading, index filtering/sort by `detected_at`, `201` on create, and `204` empty response on delete.

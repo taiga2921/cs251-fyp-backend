@@ -37,7 +37,7 @@ class UpdateCheckpointRequest extends FormRequest
             'latitude' => ['sometimes', 'required', 'numeric', 'between:-90,90'],
             'longitude' => ['sometimes', 'required', 'numeric', 'between:-180,180'],
             'radius' => ['sometimes', 'required', 'numeric', 'min:5', 'max:100'],
-            'location_type' => ['sometimes', 'required', 'in:outdoor,indoor'],
+            'location_type' => ['sometimes', 'required', Rule::in(['outdoor', 'indoor'])],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }

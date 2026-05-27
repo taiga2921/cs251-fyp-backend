@@ -1,7 +1,9 @@
 <?php
 
-use Illuminate\Auth\AuthenticationException;
+use App\Http\Middleware\EnsureUserCanAccessPatrolMonitoring;
+use App\Http\Middleware\EnsureUserIsAdmin;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -21,8 +23,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
-            'patrol.monitoring' => \App\Http\Middleware\EnsureUserCanAccessPatrolMonitoring::class,
+            'admin' => EnsureUserIsAdmin::class,
+            'patrol.monitoring' => EnsureUserCanAccessPatrolMonitoring::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -2,7 +2,6 @@
 
 namespace Tests\Unit;
 
-use App\Models\PatrolSession;
 use App\Services\PatrolSessionSummaryService;
 use PHPUnit\Framework\TestCase;
 

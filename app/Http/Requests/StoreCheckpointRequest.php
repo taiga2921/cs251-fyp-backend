@@ -31,7 +31,7 @@ class StoreCheckpointRequest extends FormRequest
             'latitude' => ['required', 'numeric', 'between:-90,90'],
             'longitude' => ['required', 'numeric', 'between:-180,180'],
             'radius' => ['required', 'numeric', 'min:5', 'max:100'],
-            'location_type' => ['required', 'in:outdoor,indoor'],
+            'location_type' => ['required', Rule::in(['outdoor', 'indoor'])],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }

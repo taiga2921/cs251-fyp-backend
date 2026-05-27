@@ -3,8 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\LocationLog;
-use App\Models\PatrolSession;
-use App\Models\User;
 use Carbon\Carbon;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;

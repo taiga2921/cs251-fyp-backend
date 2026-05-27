@@ -3,6 +3,7 @@
 namespace Tests\Concerns;
 
 use App\Models\Checkpoint;
+use App\Models\LocationLog;
 use App\Models\PatrolSession;
 use App\Models\User;
 use App\Models\Zone;
@@ -44,7 +45,7 @@ trait CreatesPatrolFixtures
         float $defaultLng = 101.6869,
     ): void {
         foreach ($points as $point) {
-            \App\Models\LocationLog::query()->create([
+            LocationLog::query()->create([
                 'id' => (string) Str::uuid(),
                 'patrol_session_id' => $patrol->id,
                 'user_id' => $user->id,
