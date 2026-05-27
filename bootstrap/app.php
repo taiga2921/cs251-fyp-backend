@@ -24,7 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->use([
-            HandleCors::class,
+            \Illuminate\Http\Middleware\HandleCors::class,
         ]);
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
