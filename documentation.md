@@ -684,6 +684,27 @@ The `checkpoints` module is fully implemented and wired:
 
 **`location_type` column:** DB enum `outdoor` \| `indoor` (default `outdoor`). Create/update validation in `StoreCheckpointRequest` / `UpdateCheckpointRequest`: `Rule::in(['outdoor', 'indoor'])`. Index filter query param `location_type` accepts the same two values.
 
+**Coordinates:** `latitude` and `longitude` are `decimal(10, 7)` in migration `2026_05_07_094600_create_checkpoints_table.php`. Validation: required on create; `numeric`, latitude `between:-90,90`, longitude `between:-180,180`. `radius`: required, `numeric`, `min:5`, `max:100` (metres).
+
+**Create request body (example):**
+
+```json
+{
+  "zone_id": "zone-uuid",
+  "name": "North Gate",
+  "description": null,
+  "latitude": 3.139,
+  "longitude": 101.6869,
+  "radius": 20,
+  "location_type": "outdoor",
+  "is_active": true
+}
+```
+
+**Checkpoint resource fields (typical):** `id`, `zone_id`, `name`, `description`, `latitude`, `longitude`, `radius`, `location_type`, `is_active`, `created_at`, `updated_at`, nested `zone` on show/index when eager-loaded.
+
+**Implementation files:** `Checkpoint` model, `CheckpointController`, `StoreCheckpointRequest`, `UpdateCheckpointRequest`, `CheckpointResource`, `CheckpointFactory`, `CheckpointSeeder`.
+
 ### Patrol session schema and API status
 
 The `patrol_sessions` module is fully implemented and wired:
