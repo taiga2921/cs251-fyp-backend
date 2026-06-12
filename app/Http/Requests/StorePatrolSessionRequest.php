@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use Carbon\Carbon;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -10,6 +11,23 @@ class StorePatrolSessionRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $merge = [];
+
+        if ($this->has('started_at')) {
+            $merge['started_at'] = Carbon::parse($this->input('started_at'))->utc()->toIso8601String();
+        }
+
+        if ($this->has('ended_at') && $this->input('ended_at') !== null) {
+            $merge['ended_at'] = Carbon::parse($this->input('ended_at'))->utc()->toIso8601String();
+        }
+
+        if ($merge !== []) {
+            $this->merge($merge);
+        }
     }
 
     /**

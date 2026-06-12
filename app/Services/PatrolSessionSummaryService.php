@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\PatrolSession;
+use App\Support\ApiDateTime;
 
 class PatrolSessionSummaryService
 {
@@ -54,8 +55,8 @@ class PatrolSessionSummaryService
         return [
             'patrol_session_id' => $patrolSession->id,
             'status' => $patrolSession->status,
-            'started_at' => $patrolSession->started_at,
-            'ended_at' => $patrolSession->ended_at,
+            'started_at' => ApiDateTime::format($patrolSession->started_at),
+            'ended_at' => ApiDateTime::format($patrolSession->ended_at),
             'total_location_logs' => $patrolSession->locationLogs()->count(),
             'total_checkpoints' => $totalCheckpoints,
             'verified_checkpoints' => $verifiedCheckpoints,

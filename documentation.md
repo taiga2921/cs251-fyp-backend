@@ -716,6 +716,26 @@ The `patrol_sessions` module is fully implemented and wired:
 - Validation: `**POST /api/patrol-sessions/{patrol_session}/validate`** via `PatrolSessionController@validateSession` + `App\Services\PatrolValidationService` (registered **before** the `apiResource`; controller method is `**validateSession`** because `validate` conflicts with `Controller::validate()`)
 - Seeding: `PatrolSessionFactory`, `PatrolSessionSeeder`, and `DatabaseSeeder` call chain
 
+**Date/time handling (`started_at` / `ended_at`):**
+
+- Application timezone: **`UTC`** (`config/app.php`).
+- MySQL/MariaDB connections set session timezone **`+00:00`** via `DB_TIMEZONE` (`config/database.php`) so `timestamp` columns round-trip without local-offset drift.
+- `StorePatrolSessionRequest` normalizes inbound `started_at` / `ended_at` to UTC ISO-8601 before validation and persistence.
+- `PatrolSessionResource` and `PatrolSessionSummaryService` serialize datetimes through `App\Support\ApiDateTime` (ISO-8601 UTC strings, e.g. `2026-06-12T00:30:00+00:00`) so SPA clients never receive ambiguous `Y-m-d H:i:s` values that JavaScript would parse as local time.
+
+**Create request body (example):**
+
+```json
+{
+  "user_id": "user-uuid",
+  "zone_id": "zone-uuid",
+  "started_at": "2026-06-12T00:30:00.000Z",
+  "status": "active"
+}
+```
+
+For an active patrol, omit `ended_at` (or send `null`). The guard SPA sends `started_at` as `new Date().toISOString()`; the API response `data.started_at` is the canonical stored instant.
+
 #### Patrol validation engine (Milestone 1)
 
 **Route:** `POST /api/patrol-sessions/{patrol_session}/validate` (JWT `auth:api`).

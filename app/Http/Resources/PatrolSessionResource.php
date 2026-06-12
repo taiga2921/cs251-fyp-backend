@@ -3,6 +3,7 @@
 namespace App\Http\Resources;
 
 use App\Models\PatrolSession;
+use App\Support\ApiDateTime;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -17,10 +18,10 @@ class PatrolSessionResource extends JsonResource
         return [
             'id' => $this->id,
             'status' => $this->status,
-            'started_at' => $this->started_at,
-            'ended_at' => $this->ended_at,
-            'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at,
+            'started_at' => ApiDateTime::format($this->started_at),
+            'ended_at' => ApiDateTime::format($this->ended_at),
+            'created_at' => ApiDateTime::format($this->created_at),
+            'updated_at' => ApiDateTime::format($this->updated_at),
             'user' => $this->whenLoaded('user', function (): ?array {
                 if ($this->user === null) {
                     return null;
@@ -49,7 +50,11 @@ class PatrolSessionResource extends JsonResource
                 return [
                     'id' => $this->blockchainRecord->id,
                     'transaction_hash' => $this->blockchainRecord->tx_hash,
-                    'recorded_at' => $this->blockchainRecord->confirmed_at ?? $this->blockchainRecord->submitted_at ?? $this->blockchainRecord->created_at,
+                    'recorded_at' => ApiDateTime::format(
+                        $this->blockchainRecord->confirmed_at
+                            ?? $this->blockchainRecord->submitted_at
+                            ?? $this->blockchainRecord->created_at
+                    ),
                 ];
             }, null),
         ];
