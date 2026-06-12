@@ -127,6 +127,34 @@ class PwaSyncTest extends TestCase
         $this->assertSame(1, LocationLog::query()->whereKey($locationLogId)->count());
     }
 
+    public function test_sync_bumps_duplicate_device_timestamp_for_same_patrol_session(): void
+    {
+        [$user, $patrol] = $this->createPatrolContext();
+        $sharedTimestamp = now()->getTimestampMs();
+        $firstId = (string) Str::uuid();
+        $secondId = (string) Str::uuid();
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', array_merge(
+                $this->validPayload($firstId, $user, $patrol),
+                ['timestamp' => $sharedTimestamp],
+            ))
+            ->assertCreated();
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', array_merge(
+                $this->validPayload($secondId, $user, $patrol),
+                ['timestamp' => $sharedTimestamp],
+            ))
+            ->assertCreated();
+
+        $first = LocationLog::query()->findOrFail($firstId);
+        $second = LocationLog::query()->findOrFail($secondId);
+
+        $this->assertSame($sharedTimestamp, (int) $first->timestamp);
+        $this->assertSame($sharedTimestamp + 1, (int) $second->timestamp);
+    }
+
     public function test_validation_error_returns_422(): void
     {
         [$user, $patrol] = $this->createPatrolContext();

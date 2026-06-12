@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreLocationLogRequest;
 use App\Http\Resources\LocationLogResource;
 use App\Models\LocationLog;
+use App\Services\LocationLogTimestampService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -69,7 +70,7 @@ class LocationLogController extends Controller
         }
     }
 
-    public function store(StoreLocationLogRequest $request): JsonResponse
+    public function store(StoreLocationLogRequest $request, LocationLogTimestampService $timestampService): JsonResponse
     {
         try {
             $data = $request->validated();
@@ -78,6 +79,10 @@ class LocationLogController extends Controller
                 $data['id'] = (string) Str::uuid();
             }
 
+            $data['timestamp'] = $timestampService->normalizeForPatrolSession(
+                $data['patrol_session_id'],
+                (int) $data['timestamp'],
+            );
             $data['server_received_at'] = now();
 
             $locationLog = LocationLog::query()->create($data);

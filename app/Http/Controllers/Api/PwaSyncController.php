@@ -6,13 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\SyncPwaLocationLogRequest;
 use App\Http\Resources\LocationLogResource;
 use App\Models\LocationLog;
+use App\Services\LocationLogTimestampService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Throwable;
 
 class PwaSyncController extends Controller
 {
-    public function sync(SyncPwaLocationLogRequest $request): JsonResponse
+    public function sync(SyncPwaLocationLogRequest $request, LocationLogTimestampService $timestampService): JsonResponse
     {
         try {
             $data = $request->validated();
@@ -39,6 +40,11 @@ class PwaSyncController extends Controller
                     'data' => null,
                 ], 409);
             }
+
+            $data['timestamp'] = $timestampService->normalizeForPatrolSession(
+                $data['patrolId'],
+                (int) $data['timestamp'],
+            );
 
             $storedSource = $this->storedSource($data['source']);
 

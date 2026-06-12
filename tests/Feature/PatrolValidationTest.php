@@ -285,6 +285,46 @@ class PatrolValidationTest extends TestCase
             ->assertUnauthorized();
     }
 
+    public function test_validate_flags_duplicate_device_timestamps_in_movement_segment(): void
+    {
+        $user = User::factory()->create();
+        $zone = Zone::factory()->create();
+        $patrol = PatrolSession::factory()->create([
+            'user_id' => $user->id,
+            'zone_id' => $zone->id,
+        ]);
+
+        $sharedTs = now()->getTimestampMs();
+
+        foreach ([0, 1] as $offset) {
+            LocationLog::query()->create([
+                'id' => (string) Str::uuid(),
+                'patrol_session_id' => $patrol->id,
+                'user_id' => $user->id,
+                'latitude' => 3.139 + ($offset * 0.0001),
+                'longitude' => 101.6869,
+                'accuracy' => 10,
+                'timestamp' => $sharedTs,
+                'server_received_at' => now(),
+                'source' => 'live',
+                'tracking_state' => 'active',
+            ]);
+        }
+
+        $result = app(PatrolValidationService::class)->validatePatrolSession($patrol);
+
+        $duplicateIds = $result['anomalies']['timestamp_issues']['duplicate_ids'] ?? [];
+        $this->assertNotEmpty($duplicateIds);
+
+        $segmentItems = array_values(array_filter(
+            $result['anomalies']['items'] ?? [],
+            fn (array $item) => $item['type'] === 'timestamp_issue'
+                && str_starts_with($item['id'], 'timestamp-segment-')
+        ));
+        $this->assertNotEmpty($segmentItems);
+        $this->assertStringContainsString('Timestamp integrity issue', $segmentItems[0]['message']);
+    }
+
     public function test_validate_returns_flat_anomaly_items_for_speed_anomaly(): void
     {
         $user = User::factory()->create();
