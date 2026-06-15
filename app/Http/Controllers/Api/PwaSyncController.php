@@ -46,8 +46,6 @@ class PwaSyncController extends Controller
                 (int) $data['timestamp'],
             );
 
-            $storedSource = $this->storedSource($data['source']);
-
             $accuracy = $data['accuracy'] ?? null;
             if ($accuracy === null) {
                 $accuracy = 0.0;
@@ -62,7 +60,7 @@ class PwaSyncController extends Controller
                 'accuracy' => $accuracy,
                 'timestamp' => $data['timestamp'],
                 'server_received_at' => now(),
-                'source' => $storedSource,
+                'source' => $data['source'],
                 'tracking_state' => $data['trackingState'],
                 'speed' => $data['speed'] ?? null,
                 'heading' => $data['heading'] ?? null,
@@ -123,19 +121,11 @@ class PwaSyncController extends Controller
             && (float) $existing->latitude === (float) $data['lat']
             && (float) $existing->longitude === (float) $data['lng']
             && (int) $existing->timestamp === (int) $data['timestamp']
-            && $existing->source === $this->storedSource($data['source'])
+            && $existing->source === $data['source']
             && $existing->tracking_state === $data['trackingState']
             && (float) ($existing->accuracy ?? 0) === (float) $accuracy
             && $this->nullableFloatEquals($existing->speed, $data['speed'] ?? null)
             && $this->nullableFloatEquals($existing->heading, $data['heading'] ?? null);
-    }
-
-    protected function storedSource(string $source): string
-    {
-        return match ($source) {
-            'manual' => 'sync',
-            default => $source,
-        };
     }
 
     protected function nullableFloatEquals(mixed $stored, mixed $incoming): bool

@@ -26,7 +26,7 @@ class SyncPwaLocationLogRequest extends FormRequest
             'lat' => ['required', 'numeric', 'between:-90,90'],
             'lng' => ['required', 'numeric', 'between:-180,180'],
             'accuracy' => ['nullable', 'numeric', 'min:0'],
-            'source' => ['required', 'string', 'in:live,resume,manual,sync'],
+            'source' => ['required', 'string', 'in:live,resume,sync'],
             'trackingState' => ['required', 'string', 'in:active,resumed,offline'],
             'speed' => ['nullable', 'numeric', 'min:0'],
             'heading' => ['nullable', 'numeric', 'between:0,360'],

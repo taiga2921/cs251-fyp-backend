@@ -68,7 +68,22 @@ class PwaSyncTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
-    public function test_manual_source_is_stored_as_sync(): void
+    public function test_sync_source_is_accepted(): void
+    {
+        [$user, $patrol] = $this->createPatrolContext();
+        $locationLogId = (string) Str::uuid();
+
+        $this->actingAs($user, 'api')
+            ->postJson('/api/pwa/sync', array_merge(
+                $this->validPayload($locationLogId, $user, $patrol),
+                ['source' => 'sync']
+            ))
+            ->assertCreated();
+
+        $this->assertSame('sync', LocationLog::query()->findOrFail($locationLogId)->source);
+    }
+
+    public function test_manual_source_is_rejected(): void
     {
         [$user, $patrol] = $this->createPatrolContext();
         $locationLogId = (string) Str::uuid();
@@ -78,9 +93,10 @@ class PwaSyncTest extends TestCase
                 $this->validPayload($locationLogId, $user, $patrol),
                 ['source' => 'manual']
             ))
-            ->assertCreated();
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
 
-        $this->assertSame('sync', LocationLog::query()->findOrFail($locationLogId)->source);
+        $this->assertNull(LocationLog::query()->find($locationLogId));
     }
 
     public function test_duplicate_replay_returns_success_with_duplicate_flag(): void
