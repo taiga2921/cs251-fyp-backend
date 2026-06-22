@@ -7,6 +7,7 @@ use App\Models\AnprImage;
 use App\Models\Camera;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File;
 use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
@@ -141,5 +142,138 @@ class AnprMonitoringTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.url', url('/api/anpr-images/'.$image->id.'/file'))
             ->assertJsonPath('data.image_url', url('/api/anpr-images/'.$image->id.'/file'));
+    }
+
+    public function test_anpr_event_image_upload_stores_file_and_creates_row(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('full.jpg', 200, 'image/jpeg');
+
+        $response = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $file,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.image_type', 'full')
+            ->assertJsonPath('data.anpr_event_id', $event->id);
+
+        $imageId = $response->json('data.id');
+        $filePath = $response->json('data.file_path');
+        $this->assertIsString($filePath);
+        $this->assertStringStartsWith('events/'.$event->id.'/', $filePath);
+
+        $absolutePath = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $filePath);
+        $this->assertFileExists($absolutePath);
+
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $imageId,
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => $filePath,
+        ]);
+    }
+
+    public function test_anpr_event_image_upload_returns_file_urls(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('plate.jpg', 200, 'image/jpeg');
+
+        $response = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'plate',
+                'image' => $file,
+            ])
+            ->assertOk();
+
+        $imageId = $response->json('data.id');
+        $expectedUrl = url('/api/anpr-images/'.$imageId.'/file');
+
+        $response
+            ->assertJsonPath('data.url', $expectedUrl)
+            ->assertJsonPath('data.image_url', $expectedUrl);
+    }
+
+    public function test_anpr_event_image_upload_serves_uploaded_file(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('annotated.jpg', 200, 'image/jpeg');
+
+        $uploadResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'annotated',
+                'image' => $file,
+            ])
+            ->assertOk();
+
+        $imageId = $uploadResponse->json('data.id');
+
+        $this->actingAs($admin, 'api')
+            ->get('/api/anpr-images/'.$imageId.'/file')
+            ->assertOk();
+    }
+
+    public function test_anpr_event_image_upload_replaces_existing_image_type(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $firstFile = UploadedFile::fake()->create('full-first.jpg', 200, 'image/jpeg');
+        $secondFile = UploadedFile::fake()->create('full-second.jpg', 200, 'image/jpeg');
+
+        $firstResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $firstFile,
+            ])
+            ->assertOk();
+
+        $firstId = $firstResponse->json('data.id');
+        $firstPath = $firstResponse->json('data.file_path');
+        $firstAbsolute = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, (string) $firstPath);
+
+        $secondResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $secondFile,
+            ])
+            ->assertOk();
+
+        $secondId = $secondResponse->json('data.id');
+        $secondPath = $secondResponse->json('data.file_path');
+
+        $this->assertSame($firstId, $secondId);
+        $this->assertNotSame($firstPath, $secondPath);
+        $this->assertDatabaseCount('anpr_images', 1);
+        $this->assertFileDoesNotExist($firstAbsolute);
+
+        $secondAbsolute = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, (string) $secondPath);
+        $this->assertFileExists($secondAbsolute);
+    }
+
+    public function test_anpr_event_image_upload_rejects_invalid_image_type(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('invalid.jpg', 200, 'image/jpeg');
+
+        $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'thumbnail',
+                'image' => $file,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_anpr_image_file_service_rejects_path_traversal_on_delete(): void
+    {
+        $service = app(\App\Services\Anpr\AnprImageFileService::class);
+
+        $this->assertFalse($service->deleteIfWithinAllowedRoots('../outside-root/evidence.jpg'));
+        $this->assertNull($service->resolveAbsolutePath('../outside-root/evidence.jpg'));
     }
 }

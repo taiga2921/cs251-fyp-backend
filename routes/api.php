@@ -61,6 +61,8 @@ Route::middleware('auth:api')->group(function (): void {
     Route::post('push-notifications/test', [PushNotificationController::class, 'test']);
     Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
+    Route::post('anpr-events/{anpr_event}/images/upload', [AnprImageController::class, 'uploadForEvent'])
+        ->name('anpr-events.images.upload');
     Route::apiResource('anpr-event-logs', AnprEventLogController::class);
     Route::get('anpr-images/{anpr_image}/file', [AnprImageController::class, 'file'])
         ->name('anpr-images.file');

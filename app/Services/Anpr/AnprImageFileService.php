@@ -2,8 +2,13 @@
 
 namespace App\Services\Anpr;
 
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Str;
+
 class AnprImageFileService
 {
+    private const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
+
     /**
      * @return list<string>
      */
@@ -12,6 +17,80 @@ class AnprImageFileService
         $roots = config('anpr.image_roots', []);
 
         return is_array($roots) && $roots !== [] ? $roots : [storage_path('app/anpr')];
+    }
+
+    public function primaryRoot(): string
+    {
+        return $this->allowedRoots()[0];
+    }
+
+    public function ensureDirectoryExists(string $directory): void
+    {
+        if (is_dir($directory)) {
+            return;
+        }
+
+        if (file_exists($directory)) {
+            return;
+        }
+
+        mkdir($directory, 0755, true);
+    }
+
+    /**
+     * @return array{relative_path: string, file_size: int|null, resolution: string|null, absolute_path: string}
+     */
+    public function storeUploadedEvidence(
+        UploadedFile $uploadedFile,
+        string $anprEventId,
+        string $imageType,
+    ): array {
+        $root = $this->primaryRoot();
+        $this->ensureDirectoryExists($root);
+
+        $extension = strtolower(
+            $uploadedFile->getClientOriginalExtension()
+            ?: $uploadedFile->extension()
+            ?: 'jpg'
+        );
+        $safeExtension = in_array($extension, self::ALLOWED_EXTENSIONS, true) ? $extension : 'jpg';
+
+        $filename = sprintf('%s_%s.%s', $imageType, Str::uuid(), $safeExtension);
+        $relativeDirectory = 'events/'.$anprEventId;
+        $relativePath = $relativeDirectory.'/'.$filename;
+
+        $absoluteDirectory = rtrim($root, '\\/')
+            .DIRECTORY_SEPARATOR
+            .str_replace('/', DIRECTORY_SEPARATOR, $relativeDirectory);
+        $this->ensureDirectoryExists($absoluteDirectory);
+
+        $uploadedFile->move($absoluteDirectory, $filename);
+
+        $absolutePath = $absoluteDirectory.DIRECTORY_SEPARATOR.$filename;
+        $fileSize = is_file($absolutePath) ? (int) filesize($absolutePath) : null;
+        $resolution = $this->resolveImageResolution($absolutePath);
+
+        return [
+            'relative_path' => str_replace('\\', '/', $relativePath),
+            'file_size' => $fileSize,
+            'resolution' => $resolution,
+            'absolute_path' => $absolutePath,
+        ];
+    }
+
+    public function deleteIfWithinAllowedRoots(string $filePath): bool
+    {
+        $absolutePath = $this->resolveAbsolutePath($filePath);
+
+        if ($absolutePath === null) {
+            return false;
+        }
+
+        if (! is_file($absolutePath)) {
+            return false;
+        }
+
+        return @unlink($absolutePath);
     }
 
     public function resolveAbsolutePath(string $filePath): ?string
@@ -39,6 +118,21 @@ class AnprImageFileService
         }
 
         return null;
+    }
+
+    private function resolveImageResolution(string $absolutePath): ?string
+    {
+        if (! is_file($absolutePath)) {
+            return null;
+        }
+
+        $dimensions = @getimagesize($absolutePath);
+
+        if ($dimensions === false) {
+            return null;
+        }
+
+        return sprintf('%dx%d', $dimensions[0], $dimensions[1]);
     }
 
     private function resolveExistingFileWithinAllowedRoots(string $candidate): ?string

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AnprImageResource;
+use App\Models\AnprEvent;
 use App\Models\AnprImage;
 use App\Services\Anpr\AnprImageFileService;
 use Illuminate\Http\JsonResponse;
@@ -127,6 +128,70 @@ class AnprImageController extends Controller
                 'Content-Type' => $mimeType,
                 'Cache-Control' => 'private, max-age=300',
             ]);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e);
+        }
+    }
+
+    public function uploadForEvent(
+        Request $request,
+        AnprEvent $anprEvent,
+        AnprImageFileService $fileService,
+    ): JsonResponse {
+        try {
+            $validator = Validator::make($request->all(), [
+                'image_type' => ['required', Rule::in(['full', 'plate', 'annotated'])],
+                'image' => ['required', 'file', 'image', 'mimes:jpg,jpeg,png,bmp,webp', 'max:10240'],
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'data' => ['errors' => $validator->errors()->toArray()],
+                ], 422);
+            }
+
+            $validated = $validator->validated();
+            $imageType = (string) $validated['image_type'];
+            /** @var \Illuminate\Http\UploadedFile $uploadedFile */
+            $uploadedFile = $validated['image'];
+
+            $existing = AnprImage::query()
+                ->where('anpr_event_id', $anprEvent->id)
+                ->where('image_type', $imageType)
+                ->first();
+
+            if ($existing !== null && is_string($existing->file_path) && $existing->file_path !== '') {
+                $fileService->deleteIfWithinAllowedRoots($existing->file_path);
+            }
+
+            $stored = $fileService->storeUploadedEvidence(
+                $uploadedFile,
+                (string) $anprEvent->id,
+                $imageType,
+            );
+
+            $anprImage = AnprImage::query()->updateOrCreate(
+                [
+                    'anpr_event_id' => $anprEvent->id,
+                    'image_type' => $imageType,
+                ],
+                [
+                    'file_path' => $stored['relative_path'],
+                    'file_size' => $stored['file_size'],
+                    'resolution' => $stored['resolution'],
+                    'expires_at' => null,
+                ],
+            );
+
+            $anprImage->load('anprEvent');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'ANPR image uploaded successfully.',
+                'data' => AnprImageResource::make($anprImage),
+            ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }
