@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\AnprEventResource;
 use App\Models\AnprEvent;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,13 +21,8 @@ class AnprEventController extends Controller
     {
         $relations = ['vehicle', 'camera'];
 
-        // Load optional relations only when their tables are present in this deployment.
         if (Schema::hasTable('anpr_images')) {
             $relations[] = 'images';
-        }
-
-        if (Schema::hasTable('anpr_event_logs')) {
-            $relations[] = 'logs';
         }
 
         return $relations;
@@ -37,6 +33,14 @@ class AnprEventController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'per_page' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100'],
+                'page' => ['sometimes', 'nullable', 'integer', 'min:1'],
+                'plate_number' => ['sometimes', 'nullable', 'string', 'max:20'],
+                'search' => ['sometimes', 'nullable', 'string', 'max:20'],
+                'is_valid' => ['sometimes', 'nullable', 'boolean'],
+                'is_flagged' => ['sometimes', 'nullable', 'boolean'],
+                'date_from' => ['sometimes', 'nullable', 'date'],
+                'date_to' => ['sometimes', 'nullable', 'date', 'after_or_equal:date_from'],
+                'camera_id' => ['sometimes', 'nullable', 'uuid', 'exists:cameras,id'],
             ]);
 
             if ($validator->fails()) {
@@ -48,16 +52,44 @@ class AnprEventController extends Controller
             }
 
             $validated = $validator->validated();
-            $anprEvents = AnprEvent::query()
-                ->with($this->eagerRelations())
+            $query = AnprEvent::query()->with($this->eagerRelations());
+
+            $plateSearch = $validated['plate_number'] ?? $validated['search'] ?? null;
+            if (is_string($plateSearch) && trim($plateSearch) !== '') {
+                $query->where('plate_number', 'like', '%'.trim($plateSearch).'%');
+            }
+
+            if (array_key_exists('is_valid', $validated)) {
+                $query->where('is_valid', (bool) $validated['is_valid']);
+            }
+
+            if (array_key_exists('is_flagged', $validated)) {
+                $query->where('is_flagged', (bool) $validated['is_flagged']);
+            }
+
+            if (array_key_exists('camera_id', $validated)) {
+                $query->where('camera_id', $validated['camera_id']);
+            }
+
+            if (array_key_exists('date_from', $validated)) {
+                $query->whereDate('detection_time', '>=', $validated['date_from']);
+            }
+
+            if (array_key_exists('date_to', $validated)) {
+                $query->whereDate('detection_time', '<=', $validated['date_to']);
+            }
+
+            $anprEvents = $query
                 ->latest('detection_time')
                 ->paginate($validated['per_page'] ?? 15)
                 ->withQueryString();
 
+            $payload = AnprEventResource::collection($anprEvents)->response()->getData(true);
+
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR events retrieved successfully.',
-                'data' => $anprEvents,
+                'data' => $payload,
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -94,7 +126,7 @@ class AnprEventController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR event created successfully.',
-                'data' => $anprEvent,
+                'data' => AnprEventResource::make($anprEvent),
             ], 201);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -109,7 +141,7 @@ class AnprEventController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR event retrieved successfully.',
-                'data' => $anprEvent,
+                'data' => AnprEventResource::make($anprEvent),
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -146,7 +178,7 @@ class AnprEventController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR event updated successfully.',
-                'data' => $anprEvent,
+                'data' => AnprEventResource::make($anprEvent),
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);

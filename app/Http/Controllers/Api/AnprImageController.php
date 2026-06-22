@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\AnprImageResource;
 use App\Models\AnprImage;
+use App\Services\Anpr\AnprImageFileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 
 class AnprImageController extends Controller
@@ -45,10 +48,12 @@ class AnprImageController extends Controller
                 ->paginate($validated['per_page'] ?? 15)
                 ->withQueryString();
 
+            $payload = AnprImageResource::collection($anprImages)->response()->getData(true);
+
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR images retrieved successfully.',
-                'data' => $anprImages,
+                'data' => $payload,
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -81,7 +86,7 @@ class AnprImageController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR image created successfully.',
-                'data' => $anprImage,
+                'data' => AnprImageResource::make($anprImage),
             ], 201);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -96,8 +101,32 @@ class AnprImageController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR image retrieved successfully.',
-                'data' => $anprImage,
+                'data' => AnprImageResource::make($anprImage),
             ], 200);
+        } catch (Throwable $e) {
+            return $this->errorResponse($e);
+        }
+    }
+
+    public function file(AnprImage $anprImage, AnprImageFileService $fileService): BinaryFileResponse|JsonResponse
+    {
+        try {
+            $absolutePath = $fileService->resolveAbsolutePath((string) $anprImage->file_path);
+
+            if ($absolutePath === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'ANPR image file is unavailable.',
+                    'data' => null,
+                ], 404);
+            }
+
+            $mimeType = mime_content_type($absolutePath) ?: 'application/octet-stream';
+
+            return response()->file($absolutePath, [
+                'Content-Type' => $mimeType,
+                'Cache-Control' => 'private, max-age=300',
+            ]);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }
@@ -129,7 +158,7 @@ class AnprImageController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'ANPR image updated successfully.',
-                'data' => $anprImage,
+                'data' => AnprImageResource::make($anprImage),
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);

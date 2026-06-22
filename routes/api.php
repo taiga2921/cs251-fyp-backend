@@ -62,5 +62,7 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
     Route::apiResource('anpr-event-logs', AnprEventLogController::class);
+    Route::get('anpr-images/{anpr_image}/file', [AnprImageController::class, 'file'])
+        ->name('anpr-images.file');
     Route::apiResource('anpr-images', AnprImageController::class);
 });
