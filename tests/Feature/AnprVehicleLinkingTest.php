@@ -258,4 +258,153 @@ class AnprVehicleLinkingTest extends TestCase
         $this->assertArrayHasKey('source', $response->json('data.errors'));
         $this->assertDatabaseHas('vehicles', ['id' => $vehicle->id, 'source' => 'manual']);
     }
+
+    public function test_manual_vehicle_create_stores_normalized_plate(): void
+    {
+        $admin = $this->adminUser();
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/vehicles', ['plate_number' => 'abc-1001'])
+            ->assertCreated()
+            ->assertJsonPath('data.plate_number', 'ABC1001')
+            ->assertJsonPath('data.source', 'manual');
+
+        $this->assertDatabaseHas('vehicles', [
+            'plate_number' => 'ABC1001',
+            'source' => 'manual',
+        ]);
+    }
+
+    public function test_manual_vehicle_create_rejects_normalized_duplicate_against_canonical_plate(): void
+    {
+        $admin = $this->adminUser();
+        Vehicle::factory()->create(['plate_number' => 'ABC1001', 'source' => 'manual']);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/vehicles', ['plate_number' => 'ABC-1001'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('plate_number', $response->json('data.errors'));
+        $this->assertDatabaseCount('vehicles', 1);
+    }
+
+    public function test_manual_vehicle_create_rejects_normalized_duplicate_against_legacy_separator_plate(): void
+    {
+        $admin = $this->adminUser();
+        Vehicle::factory()->create(['plate_number' => 'ABC_1001', 'source' => 'manual']);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/vehicles', ['plate_number' => 'ABC1001'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('plate_number', $response->json('data.errors'));
+        $this->assertDatabaseCount('vehicles', 1);
+    }
+
+    public function test_anpr_event_store_rejects_empty_normalized_plate(): void
+    {
+        $admin = $this->adminUser();
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/anpr-events', $this->anprEventPayload('---'))
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertSame(
+            ['Plate number cannot be empty after normalization.'],
+            $response->json('data.errors.plate_number')
+        );
+    }
+
+    public function test_anpr_event_update_rejects_vehicle_id(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $otherVehicle = Vehicle::factory()->create();
+
+        $response = $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-events/'.$event->id, [
+                'vehicle_id' => $otherVehicle->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('vehicle_id', $response->json('data.errors'));
+    }
+
+    public function test_anpr_event_update_relinks_when_plate_changes(): void
+    {
+        $admin = $this->adminUser();
+        $camera = Camera::factory()->create();
+        $originalVehicle = Vehicle::factory()->create(['plate_number' => 'ABC1001', 'source' => 'manual']);
+
+        $event = AnprEvent::factory()->create([
+            'camera_id' => $camera->id,
+            'vehicle_id' => $originalVehicle->id,
+            'plate_number' => 'ABC1001',
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-events/'.$event->id, [
+                'plate_number' => 'xyz-2002',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.plate_number', 'XYZ2002')
+            ->assertJsonPath('data.vehicle.plate_number', 'XYZ2002');
+
+        $this->assertNotSame($originalVehicle->id, $response->json('data.vehicle_id'));
+        $this->assertDatabaseHas('vehicles', ['plate_number' => 'XYZ2002']);
+    }
+
+    public function test_anpr_event_update_derives_flagged_status_from_linked_vehicle(): void
+    {
+        $admin = $this->adminUser();
+        $camera = Camera::factory()->create();
+        $originalVehicle = Vehicle::factory()->create([
+            'plate_number' => 'ABC1001',
+            'status' => 'normal',
+            'source' => 'manual',
+        ]);
+        $flaggedVehicle = Vehicle::factory()->create([
+            'plate_number' => 'XYZ2002',
+            'status' => 'flagged',
+            'source' => 'manual',
+        ]);
+
+        $event = AnprEvent::factory()->create([
+            'camera_id' => $camera->id,
+            'vehicle_id' => $originalVehicle->id,
+            'plate_number' => 'ABC1001',
+            'is_flagged' => false,
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-events/'.$event->id, [
+                'plate_number' => 'xyz-2002',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.is_flagged', true)
+            ->assertJsonPath('data.vehicle_id', $flaggedVehicle->id)
+            ->assertJsonPath('data.vehicle.status', 'flagged');
+    }
+
+    public function test_anpr_event_update_rejects_empty_normalized_plate(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+
+        $response = $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-events/'.$event->id, [
+                'plate_number' => '---',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertSame(
+            ['Plate number cannot be empty after normalization.'],
+            $response->json('data.errors.plate_number')
+        );
+    }
 }

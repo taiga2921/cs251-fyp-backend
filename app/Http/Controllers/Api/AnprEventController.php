@@ -152,6 +152,11 @@ class AnprEventController extends Controller
 
             $validated = $validator->validated();
             $normalizedPlate = $this->vehicleLinker->normalizePlateNumber($validated['plate_number']);
+
+            if ($normalizedPlate === '') {
+                return $this->plateNumberValidationErrorResponse();
+            }
+
             $vehicle = $this->vehicleLinker->linkOrCreate($validated['plate_number']);
 
             $anprEvent = AnprEvent::query()->create([
@@ -197,13 +202,13 @@ class AnprEventController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'vehicle_id' => ['sometimes', 'nullable', 'exists:vehicles,id'],
+                'vehicle_id' => ['prohibited'],
                 'camera_id' => ['sometimes', 'required', 'exists:cameras,id'],
                 'blockchain_record_id' => ['sometimes', 'nullable', 'exists:blockchain_records,id'],
                 'plate_number' => ['sometimes', 'required', 'string', 'max:20'],
                 'confidence' => ['sometimes', 'required', 'numeric', 'min:0', 'max:1'],
                 'detection_time' => ['sometimes', 'required', 'date'],
-                'is_flagged' => ['sometimes', 'boolean'],
+                'is_flagged' => ['prohibited'],
                 'is_valid' => ['sometimes', 'boolean'],
                 'latitude' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
                 'longitude' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
@@ -221,10 +226,31 @@ class AnprEventController extends Controller
 
             if (array_key_exists('plate_number', $validated)) {
                 $normalizedPlate = $this->vehicleLinker->normalizePlateNumber($validated['plate_number']);
+
+                if ($normalizedPlate === '') {
+                    return $this->plateNumberValidationErrorResponse();
+                }
+
                 $vehicle = $this->vehicleLinker->linkOrCreate($validated['plate_number']);
                 $validated['plate_number'] = $normalizedPlate;
                 $validated['vehicle_id'] = $vehicle->id;
                 $validated['is_flagged'] = $vehicle->status === 'flagged';
+            } else {
+                $vehicle = $anprEvent->vehicle;
+
+                if (! $vehicle && $anprEvent->plate_number) {
+                    $normalizedPlate = $this->vehicleLinker->normalizePlateNumber($anprEvent->plate_number);
+
+                    if ($normalizedPlate !== '') {
+                        $vehicle = $this->vehicleLinker->linkOrCreate($anprEvent->plate_number);
+                        $validated['vehicle_id'] = $vehicle->id;
+                        $validated['plate_number'] = $normalizedPlate;
+                    }
+                }
+
+                if ($vehicle) {
+                    $validated['is_flagged'] = $vehicle->status === 'flagged';
+                }
             }
 
             $anprEvent->update($validated);
@@ -264,5 +290,18 @@ class AnprEventController extends Controller
             'message' => $message,
             'data' => null,
         ], 500);
+    }
+
+    protected function plateNumberValidationErrorResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed.',
+            'data' => [
+                'errors' => [
+                    'plate_number' => ['Plate number cannot be empty after normalization.'],
+                ],
+            ],
+        ], 422);
     }
 }

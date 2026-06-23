@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AnprVehicleResource;
 use App\Models\Vehicle;
+use App\Services\Anpr\AnprVehicleLinker;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -14,6 +15,10 @@ use Throwable;
 
 class VehicleController extends Controller
 {
+    public function __construct(
+        protected AnprVehicleLinker $vehicleLinker
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -24,11 +29,7 @@ class VehicleController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed.',
-                    'data' => ['errors' => $validator->errors()->toArray()],
-                ], 422);
+                return $this->validationFailedResponse($validator);
             }
 
             $validated = $validator->validated();
@@ -59,7 +60,8 @@ class VehicleController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'plate_number' => ['required', 'string', 'max:20', 'unique:vehicles,plate_number'],
+                'plate_number' => ['required', 'string', 'max:20'],
+                'source' => ['prohibited'],
                 'owner_name' => ['sometimes', 'nullable', 'string', 'max:100'],
                 'vehicle_type' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'status' => ['sometimes', 'string', Rule::in(['normal', 'flagged', 'whitelist'])],
@@ -67,16 +69,28 @@ class VehicleController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed.',
-                    'data' => ['errors' => $validator->errors()->toArray()],
-                ], 422);
+                return $this->validationFailedResponse($validator);
             }
 
             $validated = $validator->validated();
+            $normalizedPlate = $this->vehicleLinker->normalizePlateNumber($validated['plate_number']);
+
+            if ($normalizedPlate === '') {
+                return $this->plateNumberValidationErrorResponse();
+            }
+
+            if ($this->vehicleLinker->findByNormalizedPlate($validated['plate_number'])) {
+                return $this->validationErrorResponse([
+                    'plate_number' => ['A vehicle with this plate number already exists.'],
+                ]);
+            }
+
             $vehicle = Vehicle::query()->create([
-                ...$validated,
+                'plate_number' => $normalizedPlate,
+                'owner_name' => $validated['owner_name'] ?? null,
+                'vehicle_type' => $validated['vehicle_type'] ?? null,
+                'status' => $validated['status'] ?? 'normal',
+                'notes' => $validated['notes'] ?? null,
                 'source' => 'manual',
             ]);
 
@@ -116,11 +130,7 @@ class VehicleController extends Controller
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed.',
-                    'data' => ['errors' => $validator->errors()->toArray()],
-                ], 422);
+                return $this->validationFailedResponse($validator);
             }
 
             $vehicle->update($validator->validated());
@@ -144,6 +154,34 @@ class VehicleController extends Controller
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }
+    }
+
+    /**
+     * @param  array<string, list<string>>  $errors
+     */
+    protected function validationErrorResponse(array $errors): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed.',
+            'data' => ['errors' => $errors],
+        ], 422);
+    }
+
+    protected function plateNumberValidationErrorResponse(): JsonResponse
+    {
+        return $this->validationErrorResponse([
+            'plate_number' => ['Plate number cannot be empty after normalization.'],
+        ]);
+    }
+
+    protected function validationFailedResponse(\Illuminate\Contracts\Validation\Validator $validator): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed.',
+            'data' => ['errors' => $validator->errors()->toArray()],
+        ], 422);
     }
 
     protected function errorResponse(Throwable $e): JsonResponse
