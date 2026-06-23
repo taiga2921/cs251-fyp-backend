@@ -8,11 +8,13 @@ use App\Models\User;
 use Carbon\Carbon;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
 
 class PatrolRouteTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesPatrolUsers;
 
     protected function setUp(): void
     {
@@ -40,7 +42,7 @@ class PatrolRouteTest extends TestCase
 
     public function test_patrol_routes_filter_by_patrol_session_id(): void
     {
-        $user = User::factory()->create();
+        $user = $this->securityOperatorUser();
         $patrolA = PatrolSession::factory()->create(['user_id' => $user->id]);
         $patrolB = PatrolSession::factory()->create(['user_id' => $user->id]);
 
@@ -58,7 +60,7 @@ class PatrolRouteTest extends TestCase
 
     public function test_route_list_is_ordered_by_recorded_at_ascending(): void
     {
-        $user = User::factory()->create();
+        $user = $this->securityOperatorUser();
         $patrol = PatrolSession::factory()->create(['user_id' => $user->id]);
 
         PatrolRoute::factory()->create([
@@ -70,9 +72,12 @@ class PatrolRouteTest extends TestCase
             'recorded_at' => Carbon::parse('2026-05-20 10:01:00'),
         ]);
 
-        $rows = $this->actingAs($user, 'api')
+        $response = $this->actingAs($user, 'api')
             ->getJson('/api/patrol-routes?patrol_session_id='.$patrol->id)
-            ->json('data.data');
+            ->assertOk();
+
+        $rows = $response->json('data.data');
+        $this->assertCount(2, $rows);
 
         $this->assertTrue(
             Carbon::parse($rows[0]['recorded_at'])->lte(Carbon::parse($rows[1]['recorded_at']))
@@ -81,7 +86,7 @@ class PatrolRouteTest extends TestCase
 
     public function test_per_page_max_is_capped_at_1000(): void
     {
-        $user = User::factory()->create();
+        $user = $this->securityOperatorUser();
 
         $this->actingAs($user, 'api')
             ->getJson('/api/patrol-routes?per_page=2000')
