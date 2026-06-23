@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\AnprVehicleResource;
 use App\Models\Vehicle;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,13 +14,41 @@ use Throwable;
 
 class VehicleController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
+            $validator = Validator::make($request->all(), [
+                'search' => ['sometimes', 'nullable', 'string', 'max:20'],
+                'per_page' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100'],
+                'page' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed.',
+                    'data' => ['errors' => $validator->errors()->toArray()],
+                ], 422);
+            }
+
+            $validated = $validator->validated();
+            $query = Vehicle::query()->latest();
+
+            if (! empty($validated['search'])) {
+                $search = trim($validated['search']);
+                $query->where('plate_number', 'like', '%'.$search.'%');
+            }
+
+            $vehicles = $query
+                ->paginate($validated['per_page'] ?? 15)
+                ->withQueryString();
+
+            $payload = AnprVehicleResource::collection($vehicles)->response()->getData(true);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Vehicles retrieved successfully.',
-                'data' => Vehicle::query()->latest()->get(),
+                'data' => $payload,
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -34,7 +63,6 @@ class VehicleController extends Controller
                 'owner_name' => ['sometimes', 'nullable', 'string', 'max:100'],
                 'vehicle_type' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'status' => ['sometimes', 'string', Rule::in(['normal', 'flagged', 'whitelist'])],
-                'source' => ['sometimes', 'string', Rule::in(['manual', 'auto_detected'])],
                 'notes' => ['sometimes', 'nullable', 'string'],
             ]);
 
@@ -46,12 +74,16 @@ class VehicleController extends Controller
                 ], 422);
             }
 
-            $vehicle = Vehicle::query()->create($validator->validated());
+            $validated = $validator->validated();
+            $vehicle = Vehicle::query()->create([
+                ...$validated,
+                'source' => 'manual',
+            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Vehicle created successfully.',
-                'data' => $vehicle,
+                'data' => AnprVehicleResource::make($vehicle),
             ], 201);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -64,7 +96,7 @@ class VehicleController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Vehicle retrieved successfully.',
-                'data' => $vehicle,
+                'data' => AnprVehicleResource::make($vehicle),
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);
@@ -75,16 +107,11 @@ class VehicleController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'plate_number' => [
-                    'sometimes',
-                    'string',
-                    'max:20',
-                    Rule::unique('vehicles', 'plate_number')->ignore($vehicle->id),
-                ],
+                'plate_number' => ['prohibited'],
+                'source' => ['prohibited'],
                 'owner_name' => ['sometimes', 'nullable', 'string', 'max:100'],
                 'vehicle_type' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'status' => ['sometimes', 'string', Rule::in(['normal', 'flagged', 'whitelist'])],
-                'source' => ['sometimes', 'string', Rule::in(['manual', 'auto_detected'])],
                 'notes' => ['sometimes', 'nullable', 'string'],
             ]);
 
@@ -101,7 +128,7 @@ class VehicleController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Vehicle updated successfully.',
-                'data' => $vehicle->fresh(),
+                'data' => AnprVehicleResource::make($vehicle->fresh()),
             ], 200);
         } catch (Throwable $e) {
             return $this->errorResponse($e);

@@ -39,6 +39,7 @@ Route::middleware('auth:api')->group(function (): void {
         Route::apiResource('roles', RoleController::class)->only(['index', 'show']);
         Route::apiResource('users', UserController::class);
         Route::post('users/{user}/restore', [UserController::class, 'restore']);
+        Route::apiResource('vehicles', VehicleController::class);
     });
 
     Route::apiResource('cameras', CameraController::class);
@@ -59,7 +60,6 @@ Route::middleware('auth:api')->group(function (): void {
     Route::post('push-subscriptions', [PushSubscriptionController::class, 'store']);
     Route::delete('push-subscriptions/{push_subscription}', [PushSubscriptionController::class, 'destroy']);
     Route::post('push-notifications/test', [PushNotificationController::class, 'test']);
-    Route::apiResource('vehicles', VehicleController::class);
     Route::apiResource('anpr-events', AnprEventController::class);
     Route::post('anpr-events/{anpr_event}/images/upload', [AnprImageController::class, 'uploadForEvent'])
         ->name('anpr-events.images.upload');
