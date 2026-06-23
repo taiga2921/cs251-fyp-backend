@@ -33,7 +33,15 @@ class AnprEventController extends Controller
     /**
      * @return list<string>
      */
-    protected function eagerRelations(): array
+    protected function indexRelations(): array
+    {
+        return ['vehicle', 'camera'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function detailRelations(): array
     {
         $relations = ['vehicle', 'camera'];
 
@@ -42,6 +50,16 @@ class AnprEventController extends Controller
         }
 
         return $relations;
+    }
+
+    /**
+     * @deprecated Use indexRelations() or detailRelations() instead.
+     *
+     * @return list<string>
+     */
+    protected function eagerRelations(): array
+    {
+        return $this->detailRelations();
     }
 
     public function index(Request $request): JsonResponse
@@ -71,7 +89,9 @@ class AnprEventController extends Controller
             }
 
             $validated = $validator->validated();
-            $query = AnprEvent::query()->with($this->eagerRelations());
+            $query = AnprEvent::query()
+                ->with($this->indexRelations())
+                ->withCount('images');
 
             $plateSearch = $validated['plate_number'] ?? $validated['search'] ?? null;
             if (is_string($plateSearch) && trim($plateSearch) !== '') {
@@ -171,7 +191,7 @@ class AnprEventController extends Controller
                 'latitude' => $validated['latitude'] ?? null,
                 'longitude' => $validated['longitude'] ?? null,
             ]);
-            $anprEvent->load($this->eagerRelations());
+            $anprEvent->load($this->detailRelations());
 
             return response()->json([
                 'success' => true,
@@ -186,7 +206,7 @@ class AnprEventController extends Controller
     public function show(AnprEvent $anprEvent): JsonResponse
     {
         try {
-            $anprEvent->load($this->eagerRelations());
+            $anprEvent->load($this->detailRelations());
 
             return response()->json([
                 'success' => true,
@@ -254,7 +274,7 @@ class AnprEventController extends Controller
             }
 
             $anprEvent->update($validated);
-            $anprEvent->load($this->eagerRelations());
+            $anprEvent->load($this->detailRelations());
 
             return response()->json([
                 'success' => true,

@@ -31,6 +31,10 @@ class AnprEventResource extends JsonResource
             'vehicle' => AnprVehicleResource::make($this->whenLoaded('vehicle')),
             'camera' => AnprCameraResource::make($this->whenLoaded('camera')),
             'images' => AnprImageResource::collection($this->whenLoaded('images')),
+            'images_count' => $this->when(
+                array_key_exists('images_count', $this->resource->getAttributes()),
+                fn () => (int) $this->images_count
+            ),
         ];
     }
 }

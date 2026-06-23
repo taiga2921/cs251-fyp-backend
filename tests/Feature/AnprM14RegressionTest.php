@@ -90,6 +90,22 @@ class AnprM14RegressionTest extends TestCase
         $this->postJson('/api/anpr-events', [])->assertUnauthorized();
     }
 
+    public function test_anpr_events_index_returns_images_count_without_full_image_rows(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        AnprImage::factory()->count(2)->create(['anpr_event_id' => $event->id]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events')
+            ->assertOk();
+
+        $row = collect($response->json('data.data'))->firstWhere('id', $event->id);
+        $this->assertNotNull($row);
+        $this->assertSame(2, $row['images_count']);
+        $this->assertArrayNotHasKey('images', $row);
+    }
+
     public function test_anpr_event_show_includes_vehicle_camera_and_images(): void
     {
         $admin = $this->adminUser();
