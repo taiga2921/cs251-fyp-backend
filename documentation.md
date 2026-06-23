@@ -349,6 +349,8 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`** wit
 
 `**data.user` for SPA auth:** `UserResource` includes nested `**role`** (`{ id, name }` via `RoleResource`). The React app persists this object as `localStorage.auth_user` and reads `**role.name**` for Milestone 6 route/menu guards (canonical names: `Admin`, `Security Operator`, `Guard`).
 
+**User Management CRUD (frontend `feature/management-user`):** Create/update payloads must use `StoreUserRequest` / `UpdateUserRequest` field names: `name`, `email`, `password` (required on create; optional on update), `role_id` (UUID from `GET /api/roles`), and optional `phone` / `address`. The SPA does not send legacy `full_name`, `username`, `phone_number`, or string `role` slugs. Validation errors return Laravel's standard `{ message, errors: { field: [...] } }` shape on **422**.
+
 ---
 
 ## 5. Database documentation
