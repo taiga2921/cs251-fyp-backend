@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AnprEvent;
 use App\Models\Camera;
 use App\Models\Vehicle;
+use App\Services\Anpr\AnprVehicleLinker;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\CreatesPatrolUsers;
@@ -406,5 +407,65 @@ class AnprVehicleLinkingTest extends TestCase
             ['Plate number cannot be empty after normalization.'],
             $response->json('data.errors.plate_number')
         );
+    }
+
+    public function test_normalized_plate_column_sql_uses_mysql_safe_backslash_removal(): void
+    {
+        $linker = app(AnprVehicleLinker::class);
+        $sql = $linker->normalizedPlateColumnSql('plate_number');
+
+        $this->assertStringContainsString('CHAR(92)', $sql);
+        $this->assertStringNotContainsString("REPLACE(..., '\\', '')", $sql);
+        $this->assertStringNotContainsString("'), '\\', '')", $sql);
+    }
+
+    public function test_anpr_event_store_reuses_vehicle_with_legacy_backslash_plate(): void
+    {
+        $admin = $this->adminUser();
+        $existing = Vehicle::factory()->create([
+            'plate_number' => 'ABC\\1001',
+            'source' => 'manual',
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/anpr-events', $this->anprEventPayload('ABC1001'))
+            ->assertCreated()
+            ->assertJsonPath('data.vehicle_id', $existing->id)
+            ->assertJsonPath('data.plate_number', 'ABC1001');
+
+        $this->assertDatabaseCount('vehicles', 1);
+        $this->assertDatabaseHas('anpr_events', [
+            'id' => $response->json('data.id'),
+            'vehicle_id' => $existing->id,
+        ]);
+    }
+
+    public function test_manual_vehicle_create_rejects_normalized_duplicate_against_backslash_plate(): void
+    {
+        $admin = $this->adminUser();
+        Vehicle::factory()->create(['plate_number' => 'ABC\\1001', 'source' => 'manual']);
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/vehicles', ['plate_number' => 'ABC1001'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('plate_number', $response->json('data.errors'));
+        $this->assertDatabaseCount('vehicles', 1);
+    }
+
+    public function test_anpr_event_update_rejects_is_flagged(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+
+        $response = $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-events/'.$event->id, [
+                'is_flagged' => true,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('is_flagged', $response->json('data.errors'));
     }
 }

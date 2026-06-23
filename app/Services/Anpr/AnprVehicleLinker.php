@@ -15,7 +15,7 @@ class AnprVehicleLinker
     {
         $column = preg_replace('/[^a-zA-Z0-9_]/', '', $column) ?: 'plate_number';
 
-        return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(UPPER({$column}), '-', ''), ' ', ''), '.', ''), '_', ''), '/', ''), '\\', '')";
+        return "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(UPPER({$column}), '-', ''), ' ', ''), '.', ''), '_', ''), '/', ''), CHAR(92), '')";
     }
 
     public function normalizePlateNumber(string $plateNumber): string
