@@ -8,6 +8,7 @@ use App\Models\Camera;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
@@ -36,6 +37,108 @@ class AnprMonitoringTest extends TestCase
         }
 
         parent::tearDown();
+    }
+
+    public function test_anpr_events_index_returns_latest_detections_first_by_default(): void
+    {
+        $admin = $this->adminUser();
+        $older = AnprEvent::factory()->create([
+            'detection_time' => now()->subHours(2),
+        ]);
+        $newer = AnprEvent::factory()->create([
+            'detection_time' => now()->subMinutes(5),
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.data.0.id', $newer->id)
+            ->assertJsonPath('data.data.1.id', $older->id);
+    }
+
+    public function test_anpr_events_index_supports_sort_and_direction(): void
+    {
+        $admin = $this->adminUser();
+        $eventA = AnprEvent::factory()->create([
+            'detection_time' => now()->subHours(2),
+        ]);
+        $eventB = AnprEvent::factory()->create([
+            'detection_time' => now()->subMinutes(5),
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events?sort=detection_time&direction=desc')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $eventB->id)
+            ->assertJsonPath('data.data.1.id', $eventA->id);
+    }
+
+    public function test_anpr_events_index_supports_per_page(): void
+    {
+        $admin = $this->adminUser();
+        AnprEvent::factory()->count(12)->create();
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events?per_page=10')
+            ->assertOk()
+            ->assertJsonPath('data.meta.per_page', 10)
+            ->assertJsonCount(10, 'data.data');
+    }
+
+    public function test_anpr_events_index_supports_since_filter(): void
+    {
+        $admin = $this->adminUser();
+        $cutoff = now()->subMinutes(30);
+
+        $older = AnprEvent::factory()->create([
+            'detection_time' => now()->subHours(3),
+        ]);
+        DB::table('anpr_events')->where('id', $older->id)->update([
+            'created_at' => now()->subHours(3),
+            'updated_at' => now()->subHours(3),
+        ]);
+
+        $newer = AnprEvent::factory()->create([
+            'detection_time' => now()->subMinutes(5),
+        ]);
+        DB::table('anpr_events')->where('id', $newer->id)->update([
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinutes(5),
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events?since='.urlencode($cutoff->toIso8601String()))
+            ->assertOk();
+
+        $ids = collect($response->json('data.data'))->pluck('id')->all();
+
+        $this->assertContains($newer->id, $ids);
+        $this->assertNotContains($older->id, $ids);
+    }
+
+    public function test_anpr_events_index_rejects_invalid_sort(): void
+    {
+        $admin = $this->adminUser();
+
+        $response = $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events?sort=invalid_field')
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('sort', $response->json('data.errors'));
+    }
+
+    public function test_anpr_events_index_rejects_invalid_direction(): void
+    {
+        $admin = $this->adminUser();
+
+        $response = $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events?direction=sideways')
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $this->assertArrayHasKey('direction', $response->json('data.errors'));
     }
 
     public function test_anpr_events_index_supports_plate_number_filter(): void

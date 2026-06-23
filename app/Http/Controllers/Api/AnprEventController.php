@@ -8,12 +8,23 @@ use App\Models\AnprEvent;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class AnprEventController extends Controller
 {
+    /**
+     * @var list<string>
+     */
+    protected const ALLOWED_SORT_FIELDS = [
+        'detection_time',
+        'created_at',
+        'plate_number',
+        'confidence',
+    ];
+
     /**
      * @return list<string>
      */
@@ -41,6 +52,9 @@ class AnprEventController extends Controller
                 'date_from' => ['sometimes', 'nullable', 'date'],
                 'date_to' => ['sometimes', 'nullable', 'date', 'after_or_equal:date_from'],
                 'camera_id' => ['sometimes', 'nullable', 'uuid', 'exists:cameras,id'],
+                'sort' => ['sometimes', 'nullable', 'string', 'in:'.implode(',', self::ALLOWED_SORT_FIELDS)],
+                'direction' => ['sometimes', 'nullable', 'string', 'in:asc,desc'],
+                'since' => ['sometimes', 'nullable', 'date'],
             ]);
 
             if ($validator->fails()) {
@@ -79,8 +93,21 @@ class AnprEventController extends Controller
                 $query->whereDate('detection_time', '<=', $validated['date_to']);
             }
 
+            if (array_key_exists('since', $validated)) {
+                $since = Carbon::parse($validated['since']);
+                // Prefer created_at for queue-delivered events; also include detection_time
+                // so rows with older detection_time but recent persistence are not missed.
+                $query->where(function ($q) use ($since) {
+                    $q->where('created_at', '>', $since)
+                        ->orWhere('detection_time', '>', $since);
+                });
+            }
+
+            $sortField = $validated['sort'] ?? 'detection_time';
+            $sortDirection = $validated['direction'] ?? 'desc';
+
             $anprEvents = $query
-                ->latest('detection_time')
+                ->orderBy($sortField, $sortDirection)
                 ->paginate($validated['per_page'] ?? 15)
                 ->withQueryString();
 
