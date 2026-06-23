@@ -1300,7 +1300,17 @@ php artisan test
 | `WebPushNotificationTest.php`   | Test push requires auth; 503 when VAPID not configured; 422 when no subscriptions; patrol completion survives push exceptions; subscription delete                                                                                                                                  |
 | `AuthorizationTest.php`         | Admin `GET /users`; guard forbidden; security operator patrol/summary/routes access; unauthenticated patrol endpoints rejected                                                                                                                                                      |
 | `LocationLogTest.php`           | Guard / Security Operator / Admin cannot `DELETE` location logs (`405`); no `PUT`/`PATCH`; create via `POST /location-logs`; PWA sync insert; validation still runs after hardening                                                                                                 |
-| `AnprMonitoringTest.php`        | **M10:** ANPR index filters (`plate_number`, `is_valid`, `is_flagged`); nested camera omits `ip_address`, `port`, `password`, `username`, `rtsp_url`; image upload + file route; path traversal rejection; `AnprImageResource` includes `url` when resolvable |
+| `AnprMonitoringTest.php`        | **M10/M12:** ANPR index filters (`plate_number`, `is_valid`, `is_flagged`); sort/direction/since/per_page validation; nested camera omits credentials; image upload + file route; path traversal rejection; `AnprImageResource` includes `url` when resolvable |
+| `AnprVehicleLinkingTest.php`    | **M13:** Vehicle auto-link/create, plate normalization, immutability, admin-only vehicle endpoints, flagged/whitelist context |
+| `AnprM14RegressionTest.php`     | **M14:** AI-compatible event payload (no `vehicle_id`), validation envelope, auth, show resource relations, image metadata, event logs, legacy separator plate linking |
+
+
+### M14 ANPR test commands
+
+```bash
+php artisan test --filter=Anpr
+php artisan test
+```
 
 
 ### Unit tests (`tests/Unit/`)
