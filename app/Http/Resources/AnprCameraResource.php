@@ -20,16 +20,8 @@ class AnprCameraResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'location' => $this->location,
-            'ip_address' => $this->ip_address,
-            'port' => $this->port,
-            'latitude' => $this->latitude,
-            'longitude' => $this->longitude,
-            'resolution_width' => $this->resolution_width,
-            'resolution_height' => $this->resolution_height,
-            'is_active' => $this->is_active,
+            'is_active' => (bool) $this->is_active,
             'last_seen_at' => $this->last_seen_at,
-            'created_at' => $this->created_at,
-            'updated_at' => $this->updated_at,
         ];
     }
 }

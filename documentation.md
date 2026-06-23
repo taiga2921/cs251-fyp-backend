@@ -938,7 +938,7 @@ The `anpr_events` module is implemented and wired:
 - Migration: `2026_05_07_190000_create_anpr_events_table.php`
 - Model: `App\Models\AnprEvent` (UUID primary key via Laravel `HasUuids`; non-incrementing string key; casts for confidence/time/flags/coordinates)
 - API: `AnprEventController` + `Route::apiResource('anpr-events', ...)` under `auth:api`
-- Resource: `AnprEventResource` — nested `camera` via `AnprCameraResource` (omits `password`, `username`, `rtsp_url`); nested `vehicle` via `AnprVehicleResource`; nested `images` via `AnprImageResource`
+- Resource: `AnprEventResource` — nested `camera` via `AnprCameraResource` (monitoring-safe: `id`, `name`, `location`, `is_active`, `last_seen_at`; omits `ip_address`, `port`, `username`, `password`, `rtsp_url`); nested `vehicle` via `AnprVehicleResource`; nested `images` via `AnprImageResource`
 - **M10 index filters:** `per_page`, `page`, `plate_number`, `search` (alias for plate partial match), `is_valid`, `is_flagged`, `date_from`, `date_to`, `camera_id`
 - Seeding: `AnprEventSeeder` registered in `DatabaseSeeder` (uses existing cameras; optional vehicle/blockchain linkage when available)
 - Factory: `AnprEventFactory`
@@ -1299,7 +1299,7 @@ php artisan test
 | `WebPushNotificationTest.php`   | Test push requires auth; 503 when VAPID not configured; 422 when no subscriptions; patrol completion survives push exceptions; subscription delete                                                                                                                                  |
 | `AuthorizationTest.php`         | Admin `GET /users`; guard forbidden; security operator patrol/summary/routes access; unauthenticated patrol endpoints rejected                                                                                                                                                      |
 | `LocationLogTest.php`           | Guard / Security Operator / Admin cannot `DELETE` location logs (`405`); no `PUT`/`PATCH`; create via `POST /location-logs`; PWA sync insert; validation still runs after hardening                                                                                                 |
-| `AnprMonitoringTest.php`        | **M10:** ANPR index filters (`plate_number`, `is_valid`, `is_flagged`); nested camera omits `password` / `username` / `rtsp_url`; image file route requires auth; rejects traversal/unavailable paths; `AnprImageResource` includes `url` when resolvable |
+| `AnprMonitoringTest.php`        | **M10:** ANPR index filters (`plate_number`, `is_valid`, `is_flagged`); nested camera omits `ip_address`, `port`, `password`, `username`, `rtsp_url`; image upload + file route; path traversal rejection; `AnprImageResource` includes `url` when resolvable |
 
 
 ### Unit tests (`tests/Unit/`)

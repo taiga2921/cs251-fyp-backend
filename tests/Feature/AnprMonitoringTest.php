@@ -69,11 +69,15 @@ class AnprMonitoringTest extends TestCase
     {
         $admin = $this->adminUser();
         $camera = Camera::factory()->create([
+            'name' => 'Gate Camera',
+            'location' => 'Gate A',
+            'ip_address' => '192.168.1.10',
+            'port' => 554,
             'username' => 'camera-user',
             'password' => 'camera-secret',
             'rtsp_url' => 'rtsp://camera-user:camera-secret@192.168.1.10:554/stream',
         ]);
-        AnprEvent::factory()->create(['camera_id' => $camera->id]);
+        $event = AnprEvent::factory()->create(['camera_id' => $camera->id]);
 
         $response = $this->actingAs($admin, 'api')
             ->getJson('/api/anpr-events')
@@ -85,7 +89,24 @@ class AnprMonitoringTest extends TestCase
         $this->assertArrayNotHasKey('password', $cameraPayload);
         $this->assertArrayNotHasKey('username', $cameraPayload);
         $this->assertArrayNotHasKey('rtsp_url', $cameraPayload);
-        $this->assertSame('camera-user', $camera->username);
+        $this->assertArrayNotHasKey('ip_address', $cameraPayload);
+        $this->assertArrayNotHasKey('port', $cameraPayload);
+        $this->assertSame('Gate Camera', $cameraPayload['name']);
+        $this->assertSame('Gate A', $cameraPayload['location']);
+
+        $showResponse = $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-events/'.$event->id)
+            ->assertOk();
+
+        $showCamera = $showResponse->json('data.camera');
+        $this->assertIsArray($showCamera);
+        $showResponse
+            ->assertJsonMissingPath('data.camera.ip_address')
+            ->assertJsonMissingPath('data.camera.port')
+            ->assertJsonMissingPath('data.camera.username')
+            ->assertJsonMissingPath('data.camera.password')
+            ->assertJsonMissingPath('data.camera.rtsp_url')
+            ->assertJsonPath('data.camera.name', 'Gate Camera');
     }
 
     public function test_anpr_image_file_requires_authentication(): void
