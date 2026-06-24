@@ -8,6 +8,7 @@ use App\Models\BlockchainRecord;
 use App\Models\Camera;
 use App\Services\Blockchain\BlockchainHashService;
 use App\Services\Blockchain\BlockchainRecordService;
+use App\Services\Blockchain\BlockchainRetryService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -35,7 +36,7 @@ class BlockchainRecordServiceTest extends TestCase
             'blockchain.contract_address' => '0x'.str_repeat('a', 40),
         ]);
 
-        $this->service = new BlockchainRecordService(new BlockchainHashService);
+        $this->service = new BlockchainRecordService(new BlockchainHashService, new BlockchainRetryService);
     }
 
     public function test_creates_pending_blockchain_record_for_anpr_event(): void

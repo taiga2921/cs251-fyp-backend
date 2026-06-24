@@ -2,13 +2,18 @@
 
 namespace Tests\Unit\Blockchain;
 
+use App\Models\BlockchainJob;
+use App\Models\BlockchainRecord;
 use App\Services\Blockchain\BlockchainRetryService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class BlockchainRetryServiceTest extends TestCase
 {
+    use RefreshDatabase;
+
     private BlockchainRetryService $service;
 
     protected function setUp(): void
@@ -89,5 +94,46 @@ class BlockchainRetryServiceTest extends TestCase
         $this->assertSame(1, $this->service->maxAttempts());
         $this->assertSame(1, $this->service->retryBaseSeconds());
         $this->assertSame(1, $this->service->calculateDelaySeconds(1));
+    }
+
+    public function test_stale_retry_reason_detects_superseded_queued_job(): void
+    {
+        $record = BlockchainRecord::factory()->failed()->create([
+            'retry_count' => 2,
+        ]);
+
+        $staleJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 3,
+            'created_at' => now()->subMinute(),
+        ]);
+
+        BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 3,
+            'created_at' => now(),
+        ]);
+
+        $this->assertSame(
+            BlockchainRetryService::STALE_RETRY_REASON,
+            $this->service->staleRetryReason($record, $staleJob)
+        );
+    }
+
+    public function test_stale_retry_reason_returns_null_for_current_queued_job(): void
+    {
+        $record = BlockchainRecord::factory()->failed()->create([
+            'retry_count' => 1,
+        ]);
+
+        $currentJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+        ]);
+
+        $this->assertNull($this->service->staleRetryReason($record, $currentJob));
     }
 }

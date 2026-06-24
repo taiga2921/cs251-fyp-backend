@@ -14,6 +14,7 @@ class BlockchainRecordService
 {
     public function __construct(
         private readonly BlockchainHashService $hashService,
+        private readonly BlockchainRetryService $retryService,
     ) {}
 
     public function createForEntity(Model $entity, string $proofType = 'entity_created'): BlockchainRecord
@@ -147,7 +148,9 @@ class BlockchainRecordService
         $maxAttempts = max(1, (int) config('blockchain.max_retries', 5));
         $attemptNumber = max(1, (int) $record->retry_count + 1);
 
-        BlockchainJob::query()->create([
+        $this->retryService->cancelQueuedRetryJobs($record->id);
+
+        $queuedJob = BlockchainJob::query()->create([
             'blockchain_record_id' => $record->id,
             'job_type' => 'retry_anchor',
             'status' => 'queued',
@@ -160,9 +163,15 @@ class BlockchainRecordService
             'status' => 'queued',
         ]);
 
-        AnchorBlockchainRecordJob::dispatch($record->id, isRetryAttempt: true);
+        AnchorBlockchainRecordJob::dispatch(
+            $record->id,
+            isRetryAttempt: true,
+            expectedBlockchainJobId: $queuedJob->id,
+        );
 
-        return $record->fresh(['jobs']);
+        return $record->fresh([
+            'jobs' => fn ($query) => $query->latest('created_at'),
+        ]);
     }
 
     private function maybeQueueForAnchoring(BlockchainRecord $record): void

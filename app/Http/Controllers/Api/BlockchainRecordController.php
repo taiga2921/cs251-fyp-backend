@@ -76,7 +76,7 @@ class BlockchainRecordController extends Controller
         $this->authorizePatrolMonitoring();
 
         $blockchainRecord->load([
-            'jobs',
+            'jobs' => fn ($query) => $query->latest('created_at'),
             'verifications.verifiedBy',
         ]);
 

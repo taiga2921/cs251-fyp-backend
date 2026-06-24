@@ -26,6 +26,7 @@ class AnchorBlockchainRecordJob implements ShouldQueue
     public function __construct(
         public readonly string $blockchainRecordId,
         public readonly bool $isRetryAttempt = false,
+        public readonly ?string $expectedBlockchainJobId = null,
     ) {}
 
     public function handle(
@@ -39,11 +40,38 @@ class AnchorBlockchainRecordJob implements ShouldQueue
         }
 
         if ($record->isConfirmed()) {
+            if ($this->isRetryAttempt && $this->expectedBlockchainJobId !== null) {
+                $queuedJob = BlockchainJob::query()->find($this->expectedBlockchainJobId);
+
+                if ($queuedJob !== null && $queuedJob->status === 'queued') {
+                    $retryService->markRetryJobCancelled(
+                        $queuedJob,
+                        'Skipped stale retry job; record already confirmed.'
+                    );
+                }
+            }
+
             return;
         }
 
-        $attemptNumber = max(1, (int) $record->retry_count + 1);
-        $blockchainJob = $this->createJobRow($record, $attemptNumber, $retryService);
+        if ($this->isRetryAttempt && $this->expectedBlockchainJobId !== null) {
+            $queuedJob = BlockchainJob::query()->find($this->expectedBlockchainJobId);
+            $staleReason = $retryService->staleRetryReason($record, $queuedJob);
+
+            if ($staleReason !== null) {
+                if ($queuedJob !== null) {
+                    $retryService->markRetryJobCancelled($queuedJob, $staleReason);
+                }
+
+                return;
+            }
+
+            $blockchainJob = $this->activateQueuedRetryJob($queuedJob, $retryService);
+            $attemptNumber = (int) $blockchainJob->attempts;
+        } else {
+            $attemptNumber = max(1, (int) $record->retry_count + 1);
+            $blockchainJob = $this->createJobRow($record, $attemptNumber, $retryService);
+        }
 
         $record->markAsProcessing();
 
@@ -65,6 +93,22 @@ class AnchorBlockchainRecordJob implements ShouldQueue
         } catch (Throwable $exception) {
             $this->handleFailure($record, $blockchainJob, $exception, $retryService, $attemptNumber);
         }
+    }
+
+    private function activateQueuedRetryJob(
+        BlockchainJob $queuedJob,
+        BlockchainRetryService $retryService,
+    ): BlockchainJob {
+        $queuedJob->update([
+            'status' => 'processing',
+            'max_attempts' => $retryService->maxAttempts(),
+            'started_at' => now(),
+            'finished_at' => null,
+            'last_error' => null,
+            'next_attempt_at' => null,
+        ]);
+
+        return $queuedJob->refresh();
     }
 
     private function createJobRow(
@@ -218,6 +262,7 @@ class AnchorBlockchainRecordJob implements ShouldQueue
         }
 
         $nextAttemptAt = $retryService->nextAttemptAt($attemptNumber);
+        $nextAttemptNumber = $attemptNumber + 1;
 
         $blockchainJob->update([
             'next_attempt_at' => $nextAttemptAt,
@@ -227,7 +272,21 @@ class AnchorBlockchainRecordJob implements ShouldQueue
             'status' => 'queued',
         ]);
 
-        self::dispatch($record->id, isRetryAttempt: true)->delay($nextAttemptAt);
+        $queuedRetryJob = BlockchainJob::query()->create([
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => $nextAttemptNumber,
+            'max_attempts' => $retryService->maxAttempts(),
+            'next_attempt_at' => $nextAttemptAt,
+            'last_error' => $sanitizedError,
+        ]);
+
+        self::dispatch(
+            $record->id,
+            isRetryAttempt: true,
+            expectedBlockchainJobId: $queuedRetryJob->id,
+        )->delay($nextAttemptAt);
     }
 
     /**

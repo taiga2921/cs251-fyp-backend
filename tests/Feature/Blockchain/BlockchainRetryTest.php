@@ -97,8 +97,17 @@ class BlockchainRetryTest extends TestCase
         $this->assertSame('2026-06-24 12:00:10', $firstJob?->next_attempt_at?->format('Y-m-d H:i:s'));
 
         $record->refresh();
-        $this->runAnchorJob($record, isRetryAttempt: true);
-        $secondJob = BlockchainJob::query()->where('job_type', 'retry_anchor')->latest('created_at')->first();
+        $queuedRetryJob = BlockchainJob::query()
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued')
+            ->first();
+        $this->assertNotNull($queuedRetryJob);
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedRetryJob->id);
+        $secondJob = BlockchainJob::query()
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'failed')
+            ->latest('created_at')
+            ->first();
         $this->assertSame('2026-06-24 12:00:20', $secondJob?->next_attempt_at?->format('Y-m-d H:i:s'));
 
         Carbon::setTestNow();
@@ -126,12 +135,24 @@ class BlockchainRetryTest extends TestCase
         $this->assertSame('queued', $record->status);
 
         $record->update(['status' => 'queued']);
-        $this->runAnchorJob($record, isRetryAttempt: true);
+        $queuedRetryJob = BlockchainJob::query()
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued')
+            ->where('attempts', 2)
+            ->first();
+        $this->assertNotNull($queuedRetryJob);
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedRetryJob->id);
         $record->refresh();
         $this->assertSame('queued', $record->status);
 
         $record->update(['status' => 'queued']);
-        $this->runAnchorJob($record, isRetryAttempt: true);
+        $queuedRetryJob = BlockchainJob::query()
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued')
+            ->where('attempts', 3)
+            ->first();
+        $this->assertNotNull($queuedRetryJob);
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedRetryJob->id);
         $record->refresh();
 
         $this->assertSame('failed', $record->status);
@@ -199,8 +220,14 @@ class BlockchainRetryTest extends TestCase
         $record->refresh();
         $this->assertSame('queued', $record->status);
 
+        $queuedRetryJob = BlockchainJob::query()
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued')
+            ->first();
+        $this->assertNotNull($queuedRetryJob);
+
         $record->update(['status' => 'queued']);
-        $this->runAnchorJob($record, isRetryAttempt: true);
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedRetryJob->id);
 
         $record->refresh();
 
@@ -321,6 +348,168 @@ class BlockchainRetryTest extends TestCase
             ->assertJsonPath('message', 'Only failed blockchain records can be retried.');
     }
 
+    public function test_stale_automatic_retry_job_is_skipped_without_rpc_or_retry_increment(): void
+    {
+        Http::fake();
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 2,
+        ]);
+
+        $staleJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+            'max_attempts' => 3,
+            'next_attempt_at' => now()->addSeconds(10),
+            'created_at' => now()->subMinute(),
+        ]);
+
+        BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 3,
+            'max_attempts' => 3,
+            'next_attempt_at' => now()->addSeconds(20),
+            'created_at' => now(),
+        ]);
+
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $staleJob->id);
+
+        $staleJob->refresh();
+        $record->refresh();
+
+        Http::assertNothingSent();
+        $this->assertSame(2, $record->retry_count);
+        $this->assertSame('failed', $record->status);
+        $this->assertSame('cancelled', $staleJob->status);
+        $this->assertNotNull($staleJob->finished_at);
+        $this->assertStringContainsString('Skipped stale retry job', (string) $staleJob->last_error);
+        $this->assertSame(
+            0,
+            BlockchainJob::query()
+                ->where('blockchain_record_id', $record->id)
+                ->where('status', 'processing')
+                ->count()
+        );
+    }
+
+    public function test_manual_retry_cancels_superseded_queued_retry_jobs(): void
+    {
+        Queue::fake();
+
+        $admin = $this->adminUser();
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 1,
+        ]);
+
+        $supersededJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+            'max_attempts' => 5,
+            'next_attempt_at' => now()->addSeconds(30),
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/blockchain-records/'.$record->id.'/retry')
+            ->assertOk();
+
+        $supersededJob->refresh();
+
+        $this->assertSame('cancelled', $supersededJob->status);
+        $this->assertStringContainsString('Skipped stale retry job', (string) $supersededJob->last_error);
+
+        $this->assertSame(
+            1,
+            BlockchainJob::query()
+                ->where('blockchain_record_id', $record->id)
+                ->where('job_type', 'retry_anchor')
+                ->where('status', 'queued')
+                ->count()
+        );
+    }
+
+    public function test_current_delayed_retry_job_still_executes_normally(): void
+    {
+        $txHash = '0x'.str_repeat('7', 64);
+
+        Http::fake(function ($request) use ($txHash) {
+            $body = json_decode($request->body(), true);
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x539']),
+                'eth_sendTransaction' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => $txHash]),
+                'eth_getTransactionReceipt' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => [
+                    'transactionHash' => $txHash,
+                    'blockNumber' => '0x64',
+                    'status' => '0x1',
+                ]]),
+                'eth_blockNumber' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x64']),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test.'],
+                ], 500),
+            };
+        });
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'chain_id' => 1337,
+            'retry_count' => 1,
+        ]);
+
+        $queuedJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+            'max_attempts' => 3,
+            'next_attempt_at' => now()->addSeconds(10),
+        ]);
+
+        $record->update(['status' => 'queued']);
+
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedJob->id);
+
+        $queuedJob->refresh();
+        $record->refresh();
+
+        $this->assertSame('confirmed', $record->status);
+        $this->assertSame('success', $queuedJob->status);
+        $this->assertSame($txHash, $record->tx_hash);
+        $this->assertNotNull($queuedJob->finished_at);
+    }
+
+    public function test_show_blockchain_record_returns_jobs_newest_first(): void
+    {
+        $admin = $this->adminUser();
+        $record = BlockchainRecord::factory()->failed()->create();
+
+        $olderJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'anchor',
+            'status' => 'failed',
+            'created_at' => now()->subMinutes(5),
+        ]);
+
+        $newerJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'created_at' => now(),
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/blockchain-records/'.$record->id)
+            ->assertOk()
+            ->assertJsonPath('data.jobs.0.id', $newerJob->id)
+            ->assertJsonPath('data.jobs.1.id', $olderJob->id);
+    }
+
     public function test_show_response_includes_retry_and_job_fields(): void
     {
         $admin = $this->adminUser();
@@ -360,9 +549,12 @@ class BlockchainRetryTest extends TestCase
         ]);
     }
 
-    private function runAnchorJob(BlockchainRecord $record, bool $isRetryAttempt = false): void
-    {
-        (new AnchorBlockchainRecordJob($record->id, $isRetryAttempt))
+    private function runAnchorJob(
+        BlockchainRecord $record,
+        bool $isRetryAttempt = false,
+        ?string $expectedBlockchainJobId = null,
+    ): void {
+        (new AnchorBlockchainRecordJob($record->id, $isRetryAttempt, $expectedBlockchainJobId))
             ->handle(app(EthereumRpcClient::class), app(\App\Services\Blockchain\BlockchainRetryService::class));
     }
 }

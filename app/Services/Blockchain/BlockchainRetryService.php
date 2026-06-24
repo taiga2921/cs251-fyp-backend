@@ -2,11 +2,15 @@
 
 namespace App\Services\Blockchain;
 
+use App\Models\BlockchainJob;
+use App\Models\BlockchainRecord;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 
 class BlockchainRetryService
 {
+    public const STALE_RETRY_REASON = 'Skipped stale retry job; retry state has changed.';
+
     public function maxAttempts(): int
     {
         $configured = config('blockchain.max_retries', 5);
@@ -65,5 +69,76 @@ class BlockchainRetryService
         }
 
         return mb_substr(trim($message), 0, 1000);
+    }
+
+    public function staleRetryReason(BlockchainRecord $record, ?BlockchainJob $job): ?string
+    {
+        if ($job === null) {
+            return self::STALE_RETRY_REASON;
+        }
+
+        if ($job->blockchain_record_id !== $record->id) {
+            return self::STALE_RETRY_REASON;
+        }
+
+        if ($job->job_type !== 'retry_anchor') {
+            return self::STALE_RETRY_REASON;
+        }
+
+        if ($job->status !== 'queued') {
+            return self::STALE_RETRY_REASON;
+        }
+
+        if ($record->isConfirmed()) {
+            return 'Skipped stale retry job; record already confirmed.';
+        }
+
+        $hasNewerQueuedRetry = BlockchainJob::query()
+            ->where('blockchain_record_id', $record->id)
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued')
+            ->where('created_at', '>', $job->created_at)
+            ->exists();
+
+        if ($hasNewerQueuedRetry) {
+            return self::STALE_RETRY_REASON;
+        }
+
+        $expectedAttempt = max(1, (int) $record->retry_count + 1);
+
+        if ((int) $job->attempts !== $expectedAttempt) {
+            return self::STALE_RETRY_REASON;
+        }
+
+        return null;
+    }
+
+    public function markRetryJobCancelled(BlockchainJob $job, string $reason): void
+    {
+        $job->update([
+            'status' => 'cancelled',
+            'finished_at' => now(),
+            'last_error' => $this->sanitizeError($reason),
+            'next_attempt_at' => null,
+        ]);
+    }
+
+    public function cancelQueuedRetryJobs(string $blockchainRecordId, ?string $exceptJobId = null): int
+    {
+        $query = BlockchainJob::query()
+            ->where('blockchain_record_id', $blockchainRecordId)
+            ->where('job_type', 'retry_anchor')
+            ->where('status', 'queued');
+
+        if ($exceptJobId !== null) {
+            $query->where('id', '!=', $exceptJobId);
+        }
+
+        return $query->update([
+            'status' => 'cancelled',
+            'finished_at' => now(),
+            'last_error' => $this->sanitizeError(self::STALE_RETRY_REASON),
+            'next_attempt_at' => null,
+        ]);
     }
 }
