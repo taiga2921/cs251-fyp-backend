@@ -128,7 +128,7 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 There is a small `**App\Services`** layer for patrol aggregation/validation; **no** repository pattern and **no** domain events/jobs in `app/`.
 
-### Blockchain module architecture (M0–M8)
+### Blockchain module architecture (M0–M9)
 
 The Laravel backend remains the **source of truth** for operational data and blockchain **application** logic. Ethereum smart-contract tooling lives in the sibling folder **`../blockchain-ethereum-v1/`** (Solidity, Hardhat, ABI, deployment scripts)—**not** inside this Laravel tree.
 
@@ -146,14 +146,16 @@ The Laravel backend remains the **source of truth** for operational data and blo
 
 **M7 (Retry and failure handling):** `App\Services\Blockchain\BlockchainRetryService` provides exponential backoff (`BLOCKCHAIN_RETRY_BASE_SECONDS`), retry eligibility (`BLOCKCHAIN_MAX_RETRIES`), and centralized error sanitization. `AnchorBlockchainRecordJob` uses business-level retries (`$tries = 1` on the Laravel queue) with `retry_anchor` audit rows. Admin manual retry: `POST /api/blockchain-records/{id}/retry`.
 
-**M8 (Verification system):** `App\Services\Blockchain\BlockchainVerificationService` recomputes entity hashes, compares against `record_hash`, and calls `EthereumRpcClient::verifyHash()` via read-only `eth_call` when appropriate. Manual verification: `POST /api/blockchain-records/{id}/verify` (Admin + Security Operator). Persists `blockchain_verifications` and `blockchain_jobs` (`job_type = verify`). Results: `valid`, `tampered`, `pending`, `failed`, `onchain_missing`. **No** Sepolia deployment (M9), M10 auto-anchoring, or M11 dashboard.
+**M8 (Verification system):** `App\Services\Blockchain\BlockchainVerificationService` recomputes entity hashes, compares against `record_hash`, and calls `EthereumRpcClient::verifyHash()` via read-only `eth_call` when appropriate. Manual verification: `POST /api/blockchain-records/{id}/verify` (Admin + Security Operator). Persists `blockchain_verifications` and `blockchain_jobs` (`job_type = verify`). Results: `valid`, `tampered`, `pending`, `failed`, `onchain_missing`.
+
+**M9 (Sepolia deployment):** Sibling `blockchain-ethereum-v1` deploys `EvidenceStore` to Sepolia (`deployments/sepolia/EvidenceStore.json`, chain ID `11155111`). Laravel supports Sepolia via `BLOCKCHAIN_NETWORK=sepolia` and `BLOCKCHAIN_MODE=testnet`. `EthereumRpcClient` submits `storeHash` through `eth_sendRawTransaction` using `EthereumTransactionSigner` (`web3p/ethereum-tx`; requires PHP `ext-gmp` for live signing). Ganache continues to use `eth_sendTransaction`. `BlockchainConfigValidator` requires wallet, private key, and chain ID `11155111` for Sepolia. **No** M10 auto-anchoring or M11 dashboard.
 
 | Responsibility | Location in this repo | Notes |
 | --- | --- | --- |
 | Database proof rows | `BlockchainRecord`, `blockchain_records` | Read APIs exist; expanded M2 schema (`record_hash`, `proof_type`, statuses, etc.) |
 | Job audit rows | `BlockchainJob`, `blockchain_jobs` | M6+ dispatch; M7 `retry_anchor` rows and `next_attempt_at` |
 | Verification rows | `BlockchainVerification`, `blockchain_verifications` | M2 persistence only — no verification service yet |
-| Future hashing & record services | `app/Services/Blockchain/` | M4: `BlockchainHashService`; M5: `BlockchainRecordService`; M6: `EthereumRpcClient`; M7: `BlockchainRetryService`; M8: `BlockchainVerificationService`; M3: `BlockchainConfigValidator` |
+| Future hashing & record services | `app/Services/Blockchain/` | M4: `BlockchainHashService`; M5: `BlockchainRecordService`; M6: `EthereumRpcClient`; M7: `BlockchainRetryService`; M8: `BlockchainVerificationService`; M9: `EthereumTransactionSigner`; M3: `BlockchainConfigValidator` |
 | Config | `config/blockchain.php`, `.env` `BLOCKCHAIN_*` | M3 complete; disabled by default; validate with `php artisan blockchain:check-config` |
 | Queue jobs | `app/Jobs/AnchorBlockchainRecordJob.php` | M6+ Ganache anchoring when `BLOCKCHAIN_ENABLED=true`; M7 business retries |
 | Verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | M8 verify API; M7 admin retry; read APIs M5+ |
@@ -1250,7 +1252,7 @@ Implemented **application code** integrations in this repo:
 | Cloud storage                       | **Optional** S3 disk via `AWS_*` env vars in `config/filesystems.php`; no app code exclusively tied to S3 in `app/`. |
 
 
-**Blockchain:** `config/blockchain.php` loads `BLOCKCHAIN_*` environment variables (disabled by default). Validate with `php artisan blockchain:check-config`. `BlockchainHashService` (M4) builds deterministic SHA-256 hashes; `BlockchainRecordService` (M5) creates idempotent `blockchain_records` rows; `EthereumRpcClient` + `AnchorBlockchainRecordJob` (M6) anchor to Ganache when `BLOCKCHAIN_ENABLED=true`; `BlockchainRetryService` (M7) handles exponential backoff; `BlockchainVerificationService` (M8) verifies records via `POST /api/blockchain-records/{id}/verify`. Read APIs and manual verify for Admin/Security Operator; Admin-only retry. No Sepolia deployment or frontend dashboard in M8.
+**Blockchain:** `config/blockchain.php` loads `BLOCKCHAIN_*` environment variables (disabled by default). Validate with `php artisan blockchain:check-config`. `BlockchainHashService` (M4) builds deterministic SHA-256 hashes; `BlockchainRecordService` (M5) creates idempotent `blockchain_records` rows; `EthereumRpcClient` + `AnchorBlockchainRecordJob` (M6) anchor to Ganache when `BLOCKCHAIN_ENABLED=true`; Sepolia anchoring (M9) uses signed `eth_sendRawTransaction`; `BlockchainRetryService` (M7) handles exponential backoff; `BlockchainVerificationService` (M8) verifies records via `POST /api/blockchain-records/{id}/verify`. Read APIs and manual verify for Admin/Security Operator; Admin-only retry. No M10 auto-anchoring or M11 frontend dashboard.
 
 **M6 database queue:** When `QUEUE_CONNECTION=database`, anchoring jobs are queued until a worker runs. After `BlockchainRecordService::createForEntity()` with blockchain enabled, the record may remain `queued` until `php artisan queue:work` is running in a **separate Laravel terminal**. On success, expect `blockchain_records.status = confirmed` with `tx_hash` / `block_number` / `confirmations` persisted and a `blockchain_jobs` row with `job_type = anchor`, `status = success`.
 

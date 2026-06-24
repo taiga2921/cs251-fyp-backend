@@ -199,9 +199,65 @@ class BlockchainConfigurationTest extends TestCase
             'rpc_url' => 'https://sepolia.infura.io/v3/example-project-id',
             'contract_address' => $contractAddress,
             'contract_abi_path' => $abiPath,
+            'wallet_address' => '0x'.str_repeat('d', 40),
+            'private_key' => '0x'.str_repeat('e', 64),
         ]));
 
         $this->assertTrue($result['valid'], implode(', ', $result['errors']));
+    }
+
+    public function test_sepolia_config_fails_without_private_key(): void
+    {
+        $contractAddress = '0x'.str_repeat('b', 40);
+        $abiPath = $this->createTemporaryAbiFile(
+            address: $contractAddress,
+            chainId: 11155111,
+        );
+
+        $result = $this->validator->validate($this->enabledConfig([
+            'mode' => 'testnet',
+            'network' => 'sepolia',
+            'environment' => 'staging',
+            'chain_id' => 11155111,
+            'rpc_url' => 'https://sepolia.infura.io/v3/example-project-id',
+            'contract_address' => $contractAddress,
+            'contract_abi_path' => $abiPath,
+            'wallet_address' => '0x'.str_repeat('d', 40),
+            'private_key' => null,
+        ]));
+
+        $this->assertFalse($result['valid']);
+        $this->assertContains(
+            'BLOCKCHAIN_PRIVATE_KEY is required when BLOCKCHAIN_NETWORK=sepolia.',
+            $result['errors']
+        );
+    }
+
+    public function test_sepolia_config_fails_for_wrong_chain_id(): void
+    {
+        $contractAddress = '0x'.str_repeat('b', 40);
+        $abiPath = $this->createTemporaryAbiFile(
+            address: $contractAddress,
+            chainId: 11155111,
+        );
+
+        $result = $this->validator->validate($this->enabledConfig([
+            'mode' => 'testnet',
+            'network' => 'sepolia',
+            'environment' => 'staging',
+            'chain_id' => 1337,
+            'rpc_url' => 'https://sepolia.infura.io/v3/example-project-id',
+            'contract_address' => $contractAddress,
+            'contract_abi_path' => $abiPath,
+            'wallet_address' => '0x'.str_repeat('d', 40),
+            'private_key' => '0x'.str_repeat('e', 64),
+        ]));
+
+        $this->assertFalse($result['valid']);
+        $this->assertContains(
+            'BLOCKCHAIN_CHAIN_ID must be 11155111 when BLOCKCHAIN_NETWORK=sepolia.',
+            $result['errors']
+        );
     }
 
     public function test_artisan_command_returns_non_zero_on_invalid_enabled_config(): void

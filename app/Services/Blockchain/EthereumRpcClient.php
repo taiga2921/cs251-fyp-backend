@@ -14,7 +14,13 @@ class EthereumRpcClient
 
     public function __construct(
         private readonly BlockchainRetryService $retryService,
+        private readonly ?EthereumTransactionSigner $transactionSigner = null,
     ) {}
+
+    private function transactionSigner(): EthereumTransactionSigner
+    {
+        return $this->transactionSigner ??= new EthereumTransactionSigner;
+    }
 
     public function chainId(): int
     {
@@ -79,6 +85,10 @@ class EthereumRpcClient
         $to = $this->resolveContractAddress($contractAddress);
         $from = $this->resolveSenderAddress();
         $data = $this->encodeStoreHashCallData($recordHash);
+
+        if ($this->requiresSignedTransaction()) {
+            return $this->sendSignedTransaction($from, $to, $data);
+        }
 
         $result = $this->rpc('eth_sendTransaction', [[
             'from' => $from,
@@ -212,6 +222,81 @@ class EthereumRpcClient
         }
 
         return $this->normalizeAddress($candidate);
+    }
+
+    private function requiresSignedTransaction(): bool
+    {
+        $network = (string) config('blockchain.network', '');
+        $mode = (string) config('blockchain.mode', '');
+
+        return $network === 'sepolia' || $mode === 'testnet';
+    }
+
+    private function sendSignedTransaction(string $from, string $to, string $data): string
+    {
+        $privateKey = $this->resolvePrivateKey();
+        $chainId = $this->configuredChainId();
+
+        $nonce = $this->rpc('eth_getTransactionCount', [$from, 'pending']);
+        if (! is_string($nonce)) {
+            throw new RuntimeException('Ethereum RPC eth_getTransactionCount returned an invalid response.');
+        }
+
+        $gasPrice = $this->rpc('eth_gasPrice');
+        if (! is_string($gasPrice)) {
+            throw new RuntimeException('Ethereum RPC eth_gasPrice returned an invalid response.');
+        }
+
+        $gasLimit = $this->rpc('eth_estimateGas', [[
+            'from' => $from,
+            'to' => $to,
+            'data' => $data,
+        ]]);
+        if (! is_string($gasLimit)) {
+            throw new RuntimeException('Ethereum RPC eth_estimateGas returned an invalid response.');
+        }
+
+        $signed = $this->transactionSigner()->signLegacyTransaction([
+            'nonce' => $nonce,
+            'to' => $to,
+            'gas' => $gasLimit,
+            'gasPrice' => $gasPrice,
+            'value' => '0x0',
+            'data' => $data,
+            'chainId' => $chainId,
+        ], $privateKey);
+
+        $result = $this->rpc('eth_sendRawTransaction', [$signed]);
+
+        if (! is_string($result) || ! $this->isValidTransactionHash($result)) {
+            throw new RuntimeException('Ethereum RPC eth_sendRawTransaction returned an invalid transaction hash.');
+        }
+
+        return strtolower($result);
+    }
+
+    private function resolvePrivateKey(): string
+    {
+        $privateKey = config('blockchain.private_key');
+
+        if (! is_string($privateKey) || trim($privateKey) === '') {
+            throw new RuntimeException('Blockchain private key is required for signed transaction submission.');
+        }
+
+        return trim($privateKey);
+    }
+
+    private function configuredChainId(): int
+    {
+        $configuredChainId = config('blockchain.chain_id');
+
+        if ($configuredChainId === null || $configuredChainId === '') {
+            throw new RuntimeException('Blockchain chain ID is not configured.');
+        }
+
+        return is_int($configuredChainId)
+            ? $configuredChainId
+            : $this->hexQuantityToInt((string) $configuredChainId);
     }
 
     private function assertConfiguredChainIdMatchesLiveChain(): void

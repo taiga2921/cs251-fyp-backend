@@ -58,10 +58,11 @@ class BlockchainConfigValidator
         $this->validateNumericFields($config, $errors, $preferEnv);
         $this->validateAddresses($config, $errors);
         $this->validateAbiFile($config, $errors);
+        $this->validateSepoliaConfiguration($config, $errors);
         $this->validateModeNetworkAlignment($config, $warnings);
 
-        if (! $summary['private_key_configured']) {
-            $warnings[] = 'Private key not configured; transaction submission will not work in future anchoring milestones.';
+        if (! $summary['private_key_configured'] && ($config['network'] ?? '') === 'ganache') {
+            $warnings[] = 'Private key not configured; Ganache may use unlocked eth_accounts when available.';
         }
 
         return [
@@ -272,6 +273,38 @@ class BlockchainConfigValidator
                 && $deploymentChainId !== $configuredChainId) {
                 $errors[] = 'Deployment JSON chainId does not match BLOCKCHAIN_CHAIN_ID.';
             }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     * @param  list<string>  $errors
+     */
+    private function validateSepoliaConfiguration(array $config, array &$errors): void
+    {
+        if (! ($config['enabled'] ?? false)) {
+            return;
+        }
+
+        if (($config['network'] ?? '') !== 'sepolia') {
+            return;
+        }
+
+        if (($config['mode'] ?? '') !== 'testnet') {
+            $errors[] = 'BLOCKCHAIN_MODE must be testnet when BLOCKCHAIN_NETWORK=sepolia.';
+        }
+
+        $chainId = $this->integerValue($config['chain_id'] ?? null);
+        if ($chainId !== 11155111) {
+            $errors[] = 'BLOCKCHAIN_CHAIN_ID must be 11155111 when BLOCKCHAIN_NETWORK=sepolia.';
+        }
+
+        if (! $this->isNonEmptyString($config['wallet_address'] ?? null)) {
+            $errors[] = 'BLOCKCHAIN_WALLET_ADDRESS is required when BLOCKCHAIN_NETWORK=sepolia.';
+        }
+
+        if (! $this->isNonEmptyString($config['private_key'] ?? null)) {
+            $errors[] = 'BLOCKCHAIN_PRIVATE_KEY is required when BLOCKCHAIN_NETWORK=sepolia.';
         }
     }
 
