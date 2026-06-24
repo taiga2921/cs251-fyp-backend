@@ -208,4 +208,68 @@ class BlockchainDatabaseFoundationTest extends TestCase
             ->getJson('/api/blockchain-records/'.$record->id)
             ->assertForbidden();
     }
+
+    public function test_admin_can_list_blockchain_records_with_filters_and_pagination(): void
+    {
+        $admin = $this->adminUser();
+
+        $matching = BlockchainRecord::factory()->pending()->create([
+            'entity_type' => 'anpr_event',
+            'entity_id' => '01940000-0000-7000-8000-000000000101',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+        BlockchainRecord::factory()->confirmed()->create([
+            'entity_type' => 'anpr_event',
+            'entity_id' => '01940000-0000-7000-8000-000000000102',
+            'network' => 'sepolia',
+            'environment' => 'staging',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/blockchain-records?status=pending&network=ganache&environment=local&entity_type=anpr_event&entity_id='.$matching->entity_id.'&sort_by=created_at&sort_order=desc&per_page=10')
+            ->assertOk()
+            ->assertJsonPath('meta.per_page', 10)
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $matching->id)
+            ->assertJsonMissing(['data.0.private_key' => true])
+            ->assertJsonMissing(['data.0.rpc_url' => true]);
+    }
+
+    public function test_security_operator_can_access_blockchain_record_endpoints(): void
+    {
+        $operator = $this->securityOperatorUser();
+        $record = BlockchainRecord::factory()->pending()->create();
+
+        $this->actingAs($operator, 'api')
+            ->getJson('/api/blockchain-records')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $record->id);
+
+        $this->actingAs($operator, 'api')
+            ->getJson('/api/blockchain-records/'.$record->id)
+            ->assertOk()
+            ->assertJsonPath('data.id', $record->id);
+    }
+
+    public function test_record_created_by_service_is_visible_via_read_api(): void
+    {
+        $admin = $this->adminUser();
+        $event = \App\Models\AnprEvent::factory()->create([
+            'plate_number' => 'M5TEST01',
+            'confidence' => 0.8800,
+            'detection_time' => now(),
+        ]);
+
+        $record = app(\App\Services\Blockchain\BlockchainRecordService::class)->createForEntity($event);
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/blockchain-records/'.$record->id)
+            ->assertOk()
+            ->assertJsonPath('data.status', 'pending')
+            ->assertJsonPath('data.record_hash', $record->record_hash)
+            ->assertJsonPath('data.payload_summary.plate_number', 'M5TEST01')
+            ->assertJsonMissing(['data.canonical_json' => true])
+            ->assertJsonMissing(['data.private_key' => true]);
+    }
 }

@@ -128,7 +128,7 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 There is a small `**App\Services`** layer for patrol aggregation/validation; **no** repository pattern and **no** domain events/jobs in `app/`.
 
-### Blockchain module architecture (M0–M4)
+### Blockchain module architecture (M0–M5)
 
 The Laravel backend remains the **source of truth** for operational data and blockchain **application** logic. Ethereum smart-contract tooling lives in the sibling folder **`../blockchain-ethereum-v1/`** (Solidity, Hardhat, ABI, deployment scripts)—**not** inside this Laravel tree.
 
@@ -138,18 +138,20 @@ The Laravel backend remains the **source of truth** for operational data and blo
 
 **M3 (Configuration):** `config/blockchain.php`, `.env.example` `BLOCKCHAIN_*` variables, `BlockchainConfigValidator`, `php artisan blockchain:check-config`. Blockchain is **disabled by default**. Numeric `BLOCKCHAIN_*` settings are strictly validated when enabled (malformed non-integer strings are rejected). **No** RPC client, queue execution, or live anchoring yet (M5–M6+).
 
-**M4 (Deterministic hashing):** `App\Support\BlockchainCanonicalJson` and `App\Services\Blockchain\BlockchainHashService`. Produces stable canonical JSON and SHA-256 `record_hash` values for supported entities (`AnprEvent` v1 payload). Uses `config('blockchain.canonical_version')` and `config('blockchain.hash_algorithm')`. **No** `blockchain_records` row creation, Ethereum RPC, queue jobs, or transaction submission yet (M5–M6+).
+**M4 (Deterministic hashing):** `App\Support\BlockchainCanonicalJson` and `App\Services\Blockchain\BlockchainHashService`. Produces stable canonical JSON and SHA-256 `record_hash` values for supported entities (`AnprEvent` v1 payload). **No** `blockchain_records` row creation, Ethereum RPC, queue jobs, or transaction submission in M4.
+
+**M5 (Record service and read APIs):** `App\Services\Blockchain\BlockchainRecordService` creates idempotent **pending** `blockchain_records` rows using M4 hashing. Safe `payload_summary` only (no canonical JSON or GPS). Optional `anpr_events.blockchain_record_id` back-link when empty. Read APIs: `GET /api/blockchain-records`, `GET /api/blockchain-records/{id}` (Admin + Security Operator). **No** Ethereum RPC, queue anchoring, transaction signing, or public create/update/delete endpoints yet (M6+).
 
 | Responsibility | Location in this repo | Notes |
 | --- | --- | --- |
 | Database proof rows | `BlockchainRecord`, `blockchain_records` | Read APIs exist; expanded M2 schema (`record_hash`, `proof_type`, statuses, etc.) |
 | Job audit rows | `BlockchainJob`, `blockchain_jobs` | M2 persistence only — not dispatched in M2 |
 | Verification rows | `BlockchainVerification`, `blockchain_verifications` | M2 persistence only — no verification service yet |
-| Future hashing & record services | `app/Services/Blockchain/` | M4: `BlockchainHashService`; M3: `BlockchainConfigValidator`; record persistence service M5+ |
+| Future hashing & record services | `app/Services/Blockchain/` | M4: `BlockchainHashService`; M5: `BlockchainRecordService`; M3: `BlockchainConfigValidator` |
 | Config | `config/blockchain.php`, `.env` `BLOCKCHAIN_*` | M3 complete; disabled by default; validate with `php artisan blockchain:check-config` |
 | Future queue jobs | `app/Jobs/` | Planned (M6–M7) |
 | Future verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | `BlockchainRecordController` read-only today |
-| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | M2 foundation (12) + M3 configuration (16) + M4 hashing (16) — **44** blockchain tests total |
+| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | **61** blockchain tests total (M2–M5) |
 
 **Rules:**
 
@@ -158,7 +160,7 @@ The Laravel backend remains the **source of truth** for operational data and blo
 - **AI ANPR** and **React** call Laravel APIs only; they do not perform Ethereum RPC calls.
 - Existing `BlockchainRecord` metadata and read endpoints are **not** full on-chain anchoring until Ethereum RPC clients and queue jobs exist (M6+). There is currently **no** Web3/Ethereum client code in `app/`.
 
-See also: [`../blockchain-module.md`](../blockchain-module.md), [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md), [`../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md`](../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md), [`../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md`](../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md), [`../blockchain-ethereum-v1/docs/m3-configuration-and-environment-management.md`](../blockchain-ethereum-v1/docs/m3-configuration-and-environment-management.md), and [`../blockchain-ethereum-v1/docs/m4-deterministic-hashing-architecture.md`](../blockchain-ethereum-v1/docs/m4-deterministic-hashing-architecture.md).
+See also: [`../blockchain-module.md`](../blockchain-module.md), [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md), [`../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md`](../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md), [`../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md`](../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md), [`../blockchain-ethereum-v1/docs/m3-configuration-and-environment-management.md`](../blockchain-ethereum-v1/docs/m3-configuration-and-environment-management.md), [`../blockchain-ethereum-v1/docs/m4-deterministic-hashing-architecture.md`](../blockchain-ethereum-v1/docs/m4-deterministic-hashing-architecture.md), and [`../blockchain-ethereum-v1/docs/m5-blockchain-record-service-and-read-apis.md`](../blockchain-ethereum-v1/docs/m5-blockchain-record-service-and-read-apis.md).
 
 ### MVC and API flow
 
@@ -1240,7 +1242,7 @@ Implemented **application code** integrations in this repo:
 | Cloud storage                       | **Optional** S3 disk via `AWS_*` env vars in `config/filesystems.php`; no app code exclusively tied to S3 in `app/`. |
 
 
-**Blockchain:** `config/blockchain.php` loads `BLOCKCHAIN_*` environment variables (disabled by default). Validate with `php artisan blockchain:check-config`. `BlockchainHashService` (M4) builds deterministic canonical JSON and SHA-256 hashes for supported entities such as `AnprEvent`; it does **not** create `blockchain_records` rows yet. `BlockchainRecord` persistence and read-only APIs exist from M2. There is **no** on-chain RPC client, queue anchoring, or live transaction submission in M4. The sibling `../blockchain-ethereum-v1/` M1 deployment JSON may be referenced by `BLOCKCHAIN_CONTRACT_ABI_PATH` when enabled. Do not treat demo rows as live anchors until M6+.
+**Blockchain:** `config/blockchain.php` loads `BLOCKCHAIN_*` environment variables (disabled by default). Validate with `php artisan blockchain:check-config`. `BlockchainHashService` (M4) builds deterministic SHA-256 hashes; `BlockchainRecordService` (M5) creates idempotent **pending** `blockchain_records` rows (no Ethereum submission). Read-only APIs under `/api/blockchain-records` for Admin/Security Operator. There is **no** on-chain RPC client, queue anchoring, or live transaction submission in M5.
 
 ---
 
