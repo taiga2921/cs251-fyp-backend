@@ -19,7 +19,7 @@ class EthereumRpcClient
 
     private function transactionSigner(): EthereumTransactionSigner
     {
-        return $this->transactionSigner ??= new EthereumTransactionSigner;
+        return $this->transactionSigner ?? new EthereumTransactionSigner;
     }
 
     public function chainId(): int

@@ -8,6 +8,7 @@ use App\Services\Blockchain\EthereumTransactionSigner;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionMethod;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -20,13 +21,42 @@ class EthereumRpcClientTest extends TestCase
         parent::setUp();
 
         config([
+            'blockchain.enabled' => true,
+            'blockchain.mode' => 'local',
+            'blockchain.network' => 'ganache',
+            'blockchain.environment' => 'local',
             'blockchain.rpc_url' => 'http://127.0.0.1:7545',
             'blockchain.chain_id' => 1337,
             'blockchain.contract_address' => '0x'.str_repeat('a', 40),
             'blockchain.wallet_address' => '0x'.str_repeat('b', 40),
+            'blockchain.private_key' => null,
         ]);
 
         $this->client = new EthereumRpcClient(new BlockchainRetryService);
+    }
+
+    public function test_default_transaction_signer_can_be_resolved_without_mutating_readonly_property(): void
+    {
+        $client = new EthereumRpcClient(new BlockchainRetryService);
+
+        $method = new ReflectionMethod(EthereumRpcClient::class, 'transactionSigner');
+        $method->setAccessible(true);
+
+        $signer = $method->invoke($client);
+
+        $this->assertInstanceOf(EthereumTransactionSigner::class, $signer);
+        $this->assertNotSame($signer, $method->invoke($client));
+    }
+
+    public function test_injected_transaction_signer_is_reused(): void
+    {
+        $customSigner = new EthereumTransactionSigner;
+        $client = new EthereumRpcClient(new BlockchainRetryService, $customSigner);
+
+        $method = new ReflectionMethod(EthereumRpcClient::class, 'transactionSigner');
+        $method->setAccessible(true);
+
+        $this->assertSame($customSigner, $method->invoke($client));
     }
 
     public function test_encodes_store_hash_transaction_data_correctly(): void

@@ -29,12 +29,14 @@ class BlockchainRetryTest extends TestCase
 
         config([
             'blockchain.enabled' => true,
+            'blockchain.mode' => 'local',
             'blockchain.network' => 'ganache',
             'blockchain.environment' => 'local',
             'blockchain.chain_id' => 1337,
             'blockchain.rpc_url' => 'http://127.0.0.1:7545',
             'blockchain.contract_address' => '0x'.str_repeat('a', 40),
             'blockchain.wallet_address' => '0x'.str_repeat('b', 40),
+            'blockchain.private_key' => null,
             'blockchain.confirmation_blocks' => 1,
             'blockchain.max_retries' => 3,
             'blockchain.retry_base_seconds' => 10,
