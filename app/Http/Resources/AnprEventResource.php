@@ -14,6 +14,13 @@ class AnprEventResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $imageProofs = $this->relationLoaded('images')
+            ? collect($this->images)
+                ->filter(fn ($image) => $image->relationLoaded('blockchainRecord') && $image->blockchainRecord !== null)
+                ->map(fn ($image) => BlockchainProofSummaryResource::make($image->blockchainRecord))
+                ->values()
+            : collect();
+
         return [
             'id' => $this->id,
             'vehicle_id' => $this->vehicle_id,
@@ -35,6 +42,37 @@ class AnprEventResource extends JsonResource
                 array_key_exists('images_count', $this->resource->getAttributes()),
                 fn () => (int) $this->images_count
             ),
+            'blockchain_proof' => BlockchainProofSummaryResource::make($this->whenLoaded('blockchainRecord')),
+            'image_blockchain_proofs' => $this->when(
+                $this->relationLoaded('images'),
+                $imageProofs->isNotEmpty() ? $imageProofs : null
+            ),
+            'image_blockchain_proof_summary' => $this->when(
+                $this->relationLoaded('images'),
+                $this->buildImageBlockchainProofSummary($imageProofs)
+            ),
+        ];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, BlockchainProofSummaryResource>  $imageProofs
+     * @return array<string, mixed>|null
+     */
+    private function buildImageBlockchainProofSummary($imageProofs): ?array
+    {
+        if ($imageProofs->isEmpty()) {
+            return null;
+        }
+
+        $statuses = $imageProofs
+            ->map(fn ($proof) => $proof->resource->status ?? null)
+            ->filter()
+            ->values();
+
+        return [
+            'count' => $imageProofs->count(),
+            'statuses' => $statuses->unique()->values()->all(),
+            'confirmed_count' => $statuses->filter(fn ($status) => $status === 'confirmed')->count(),
         ];
     }
 }

@@ -27,6 +27,7 @@ class AnprImageResource extends JsonResource
             'expires_at' => $this->expires_at,
             'url' => $fileUrl,
             'image_url' => $fileUrl,
+            'blockchain_proof' => BlockchainProofSummaryResource::make($this->whenLoaded('blockchainRecord')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

@@ -4,6 +4,7 @@ namespace App\Services\Blockchain;
 
 use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\AnprEvent;
+use App\Models\AnprImage;
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
 use App\Support\BlockchainCanonicalJson;
@@ -79,6 +80,10 @@ class BlockchainRecordService
             return $this->buildAnprEventPayloadSummary($entity, $proofType);
         }
 
+        if ($entity instanceof AnprImage) {
+            return $this->buildAnprImagePayloadSummary($entity, $proofType);
+        }
+
         return [
             'entity_type' => class_basename($entity),
             'entity_id' => (string) $entity->getKey(),
@@ -102,6 +107,28 @@ class BlockchainRecordService
             'confidence' => number_format((float) $event->confidence, 4, '.', ''),
             'is_valid' => (bool) $event->is_valid,
             'is_flagged' => (bool) $event->is_flagged,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildAnprImagePayloadSummary(AnprImage $image, string $proofType): array
+    {
+        $evidence = $this->hashService->resolveImageEvidenceMetadata($image);
+
+        return [
+            'module' => 'anpr',
+            'entity_type' => 'anpr_image',
+            'entity_id' => (string) $image->id,
+            'proof_type' => $proofType,
+            'anpr_event_id' => (string) $image->anpr_event_id,
+            'image_type' => (string) $image->image_type,
+            'file_path' => $evidence['relative_path'],
+            'file_sha256' => $evidence['file_sha256'],
+            'file_size' => $evidence['file_size'],
+            'resolution' => $evidence['resolution'],
+            'evidence_hash_source' => $evidence['evidence_hash_source'],
         ];
     }
 

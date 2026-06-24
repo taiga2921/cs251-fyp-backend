@@ -3,6 +3,7 @@
 namespace App\Services\Blockchain;
 
 use App\Models\AnprEvent;
+use App\Models\AnprImage;
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
 use App\Models\BlockchainVerification;
@@ -165,6 +166,7 @@ class BlockchainVerificationService
     {
         return match ($record->entity_type) {
             'anpr_event' => AnprEvent::query()->find($record->entity_id),
+            'anpr_image' => AnprImage::query()->find($record->entity_id),
             default => null,
         };
     }
@@ -178,7 +180,7 @@ class BlockchainVerificationService
 
     private function entityResolutionErrorMessage(BlockchainRecord $record): string
     {
-        if ($record->entity_type !== 'anpr_event') {
+        if (! in_array($record->entity_type, ['anpr_event', 'anpr_image'], true)) {
             return 'Unsupported blockchain entity type for verification: '.$record->entity_type;
         }
 

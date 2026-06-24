@@ -7,6 +7,7 @@ use App\Http\Resources\AnprImageResource;
 use App\Models\AnprEvent;
 use App\Models\AnprImage;
 use App\Services\Anpr\AnprImageFileService;
+use App\Services\Blockchain\BlockchainAnprIntegrationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -18,6 +19,10 @@ use Throwable;
 
 class AnprImageController extends Controller
 {
+    public function __construct(
+        protected BlockchainAnprIntegrationService $blockchainIntegration,
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -83,6 +88,7 @@ class AnprImageController extends Controller
             }
 
             $anprImage = AnprImage::query()->create($validator->validated());
+            $this->blockchainIntegration->anchorImageEvidence($anprImage);
             $anprImage->load('anprEvent');
 
             return response()->json([
@@ -186,6 +192,7 @@ class AnprImageController extends Controller
                 ],
             );
 
+            $this->blockchainIntegration->anchorImageEvidence($anprImage);
             $anprImage->load('anprEvent');
 
             return response()->json([

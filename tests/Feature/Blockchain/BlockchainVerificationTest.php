@@ -253,7 +253,7 @@ class BlockchainVerificationTest extends TestCase
             'confidence' => 0.9200,
         ]);
 
-        $hash = (new BlockchainHashService)->hashEntity($event);
+        $hash = app(BlockchainHashService::class)->hashEntity($event);
 
         return BlockchainRecord::factory()->confirmed()->create([
             'entity_type' => 'anpr_event',

@@ -3,12 +3,17 @@
 namespace App\Services\Blockchain;
 
 use App\Models\AnprEvent;
+use App\Models\AnprImage;
+use App\Services\Anpr\AnprImageFileService;
 use App\Support\BlockchainCanonicalJson;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
 
 class BlockchainHashService
 {
+    public function __construct(
+        private readonly AnprImageFileService $imageFileService,
+    ) {}
     /**
      * @param  array<string, mixed>  $payload
      * @return array{
@@ -56,6 +61,10 @@ class BlockchainHashService
             return $this->buildAnprEventPayload($entity, $proofType);
         }
 
+        if ($entity instanceof AnprImage) {
+            return $this->buildAnprImagePayload($entity, $proofType);
+        }
+
         throw new InvalidArgumentException(
             'Unsupported entity class for blockchain hashing: '.$entity::class
         );
@@ -77,6 +86,91 @@ class BlockchainHashService
             'is_flagged' => (bool) $event->is_flagged,
             'is_valid' => (bool) $event->is_valid,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildAnprImagePayload(AnprImage $image, string $proofType = 'evidence_file'): array
+    {
+        $evidence = $this->resolveImageEvidenceMetadata($image);
+
+        return [
+            'entity_type' => 'anpr_image',
+            'entity_id' => (string) $image->id,
+            'proof_type' => $proofType,
+            'anpr_event_id' => (string) $image->anpr_event_id,
+            'image_type' => (string) $image->image_type,
+            'file_path' => $evidence['relative_path'],
+            'file_sha256' => $evidence['file_sha256'],
+            'file_size' => $evidence['file_size'],
+            'resolution' => $evidence['resolution'],
+            'evidence_hash_source' => $evidence['evidence_hash_source'],
+        ];
+    }
+
+    /**
+     * @return array{
+     *     relative_path: ?string,
+     *     file_sha256: ?string,
+     *     file_size: ?int,
+     *     resolution: ?string,
+     *     evidence_hash_source: 'file'|'metadata'
+     * }
+     */
+    public function resolveImageEvidenceMetadata(AnprImage $image): array
+    {
+        $relativePath = $this->normalizeRelativeFilePath($image->file_path);
+        $fileSize = is_numeric($image->file_size) ? (int) $image->file_size : null;
+        $resolution = is_string($image->resolution) && trim($image->resolution) !== ''
+            ? trim($image->resolution)
+            : null;
+
+        $absolutePath = is_string($image->file_path) && $image->file_path !== ''
+            ? $this->imageFileService->resolveAbsolutePath($image->file_path)
+            : null;
+
+        if ($absolutePath !== null) {
+            return [
+                'relative_path' => $relativePath,
+                'file_sha256' => strtolower(hash_file('sha256', $absolutePath)),
+                'file_size' => $fileSize ?? (int) filesize($absolutePath),
+                'resolution' => $resolution,
+                'evidence_hash_source' => 'file',
+            ];
+        }
+
+        return [
+            'relative_path' => $relativePath,
+            'file_sha256' => null,
+            'file_size' => $fileSize,
+            'resolution' => $resolution,
+            'evidence_hash_source' => 'metadata',
+        ];
+    }
+
+    private function normalizeRelativeFilePath(mixed $filePath): ?string
+    {
+        if (! is_string($filePath) || trim($filePath) === '') {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', trim($filePath));
+
+        if ($this->isAbsolutePath($normalized) || str_contains($normalized, '..')) {
+            return null;
+        }
+
+        return $normalized;
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        if (str_starts_with($path, '/') || str_starts_with($path, '\\')) {
+            return true;
+        }
+
+        return (bool) preg_match('/^[A-Za-z]:[\\\\\\/]/', $path);
     }
 
     /**

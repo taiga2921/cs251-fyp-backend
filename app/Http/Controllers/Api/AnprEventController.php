@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AnprEventResource;
 use App\Models\AnprEvent;
+use App\Models\BlockchainRecord;
 use App\Services\Anpr\AnprVehicleLinker;
+use App\Services\Blockchain\BlockchainAnprIntegrationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -17,7 +19,8 @@ use Throwable;
 class AnprEventController extends Controller
 {
     public function __construct(
-        protected AnprVehicleLinker $vehicleLinker
+        protected AnprVehicleLinker $vehicleLinker,
+        protected BlockchainAnprIntegrationService $blockchainIntegration,
     ) {}
 
     /**
@@ -43,7 +46,7 @@ class AnprEventController extends Controller
      */
     protected function detailRelations(): array
     {
-        $relations = ['vehicle', 'camera'];
+        $relations = ['vehicle', 'camera', 'blockchainRecord'];
 
         if (Schema::hasTable('anpr_images')) {
             $relations[] = 'images';
@@ -153,7 +156,7 @@ class AnprEventController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'camera_id' => ['required', 'exists:cameras,id'],
-                'blockchain_record_id' => ['nullable', 'exists:blockchain_records,id'],
+                'blockchain_record_id' => ['prohibited'],
                 'plate_number' => ['required', 'string', 'max:20'],
                 'confidence' => ['required', 'numeric', 'min:0', 'max:1'],
                 'detection_time' => ['required', 'date'],
@@ -182,7 +185,6 @@ class AnprEventController extends Controller
             $anprEvent = AnprEvent::query()->create([
                 'vehicle_id' => $vehicle->id,
                 'camera_id' => $validated['camera_id'],
-                'blockchain_record_id' => $validated['blockchain_record_id'] ?? null,
                 'plate_number' => $normalizedPlate,
                 'confidence' => $validated['confidence'],
                 'detection_time' => $validated['detection_time'],
@@ -191,7 +193,11 @@ class AnprEventController extends Controller
                 'latitude' => $validated['latitude'] ?? null,
                 'longitude' => $validated['longitude'] ?? null,
             ]);
+
+            $this->blockchainIntegration->anchorEventCreation($anprEvent);
+            $anprEvent->refresh();
             $anprEvent->load($this->detailRelations());
+            $this->attachImageBlockchainProofs($anprEvent);
 
             return response()->json([
                 'success' => true,
@@ -207,6 +213,7 @@ class AnprEventController extends Controller
     {
         try {
             $anprEvent->load($this->detailRelations());
+            $this->attachImageBlockchainProofs($anprEvent);
 
             return response()->json([
                 'success' => true,
@@ -224,7 +231,7 @@ class AnprEventController extends Controller
             $validator = Validator::make($request->all(), [
                 'vehicle_id' => ['prohibited'],
                 'camera_id' => ['sometimes', 'required', 'exists:cameras,id'],
-                'blockchain_record_id' => ['sometimes', 'nullable', 'exists:blockchain_records,id'],
+                'blockchain_record_id' => ['prohibited'],
                 'plate_number' => ['sometimes', 'required', 'string', 'max:20'],
                 'confidence' => ['sometimes', 'required', 'numeric', 'min:0', 'max:1'],
                 'detection_time' => ['sometimes', 'required', 'date'],
@@ -294,6 +301,23 @@ class AnprEventController extends Controller
             return response()->noContent();
         } catch (Throwable $e) {
             return $this->errorResponse($e);
+        }
+    }
+
+    protected function attachImageBlockchainProofs(AnprEvent $anprEvent): void
+    {
+        if (! $anprEvent->relationLoaded('images') || $anprEvent->images->isEmpty()) {
+            return;
+        }
+
+        $proofs = BlockchainRecord::query()
+            ->where('entity_type', 'anpr_image')
+            ->whereIn('entity_id', $anprEvent->images->pluck('id'))
+            ->get()
+            ->keyBy('entity_id');
+
+        foreach ($anprEvent->images as $image) {
+            $image->setRelation('blockchainRecord', $proofs->get($image->id));
         }
     }
 

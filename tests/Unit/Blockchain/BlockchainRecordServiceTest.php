@@ -4,6 +4,7 @@ namespace Tests\Unit\Blockchain;
 
 use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\AnprEvent;
+use App\Models\AnprImage;
 use App\Models\BlockchainRecord;
 use App\Models\Camera;
 use App\Services\Blockchain\BlockchainHashService;
@@ -12,6 +13,7 @@ use App\Services\Blockchain\BlockchainRetryService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\File;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -22,9 +24,15 @@ class BlockchainRecordServiceTest extends TestCase
 
     private BlockchainRecordService $service;
 
+    private string $imageRoot;
+
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->imageRoot = storage_path('framework/testing/blockchain-record');
+        File::ensureDirectoryExists($this->imageRoot);
+        config(['anpr.image_roots' => [$this->imageRoot]]);
 
         config([
             'blockchain.enabled' => false,
@@ -36,7 +44,16 @@ class BlockchainRecordServiceTest extends TestCase
             'blockchain.contract_address' => '0x'.str_repeat('a', 40),
         ]);
 
-        $this->service = new BlockchainRecordService(new BlockchainHashService, new BlockchainRetryService);
+        $this->service = new BlockchainRecordService(app(BlockchainHashService::class), new BlockchainRetryService);
+    }
+
+    protected function tearDown(): void
+    {
+        if (File::isDirectory($this->imageRoot)) {
+            File::deleteDirectory($this->imageRoot);
+        }
+
+        parent::tearDown();
     }
 
     public function test_creates_pending_blockchain_record_for_anpr_event(): void
@@ -63,7 +80,7 @@ class BlockchainRecordServiceTest extends TestCase
             'detection_time' => Carbon::parse('2026-06-21T10:00:00Z'),
         ]);
 
-        $expectedHash = (new BlockchainHashService)->hashEntity($event);
+        $expectedHash = app(BlockchainHashService::class)->hashEntity($event);
         $record = $this->service->createForEntity($event);
 
         $this->assertSame($expectedHash['record_hash'], $record->record_hash);
@@ -253,6 +270,40 @@ class BlockchainRecordServiceTest extends TestCase
 
         $this->assertSame('pending', $record->status);
         $this->assertNull($record->tx_hash);
+    }
+
+    public function test_creates_safe_payload_summary_for_anpr_image(): void
+    {
+        $relativePath = 'evidence/summary.jpg';
+        $absolutePath = $this->imageRoot.DIRECTORY_SEPARATOR.$relativePath;
+        File::ensureDirectoryExists(dirname($absolutePath));
+        File::put($absolutePath, 'summary-image');
+
+        $image = AnprImage::factory()->create([
+            'file_path' => $relativePath,
+            'file_size' => 13,
+            'resolution' => '640x480',
+        ]);
+
+        $record = $this->service->createForEntity($image, 'evidence_file');
+
+        $this->assertSame('anpr_image', $record->payload_summary['entity_type']);
+        $this->assertSame('evidence_file', $record->payload_summary['proof_type']);
+        $this->assertSame('file', $record->payload_summary['evidence_hash_source']);
+        $this->assertSame($relativePath, $record->payload_summary['file_path']);
+    }
+
+    public function test_duplicate_anpr_image_proof_creation_is_idempotent(): void
+    {
+        $image = AnprImage::factory()->create([
+            'file_path' => 'evidence/idempotent.jpg',
+        ]);
+
+        $first = $this->service->createForEntity($image, 'evidence_file');
+        $second = $this->service->createForEntity($image, 'evidence_file');
+
+        $this->assertTrue($first->is($second));
+        $this->assertSame(1, BlockchainRecord::query()->where('entity_type', 'anpr_image')->count());
     }
 
     /**

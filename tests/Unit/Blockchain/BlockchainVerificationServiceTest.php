@@ -3,6 +3,7 @@
 namespace Tests\Unit\Blockchain;
 
 use App\Models\AnprEvent;
+use App\Models\AnprImage;
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
 use App\Models\User;
@@ -11,6 +12,7 @@ use App\Services\Blockchain\BlockchainRetryService;
 use App\Services\Blockchain\BlockchainVerificationService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -22,9 +24,15 @@ class BlockchainVerificationServiceTest extends TestCase
 
     private BlockchainVerificationService $service;
 
+    private string $imageRoot;
+
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->imageRoot = storage_path('framework/testing/blockchain-verify');
+        File::ensureDirectoryExists($this->imageRoot);
+        config(['anpr.image_roots' => [$this->imageRoot]]);
 
         config([
             'blockchain.rpc_url' => 'http://127.0.0.1:7545',
@@ -34,10 +42,19 @@ class BlockchainVerificationServiceTest extends TestCase
         ]);
 
         $this->service = new BlockchainVerificationService(
-            new BlockchainHashService,
+            app(BlockchainHashService::class),
             new EthereumRpcClient(new BlockchainRetryService),
             new BlockchainRetryService,
         );
+    }
+
+    protected function tearDown(): void
+    {
+        if (File::isDirectory($this->imageRoot)) {
+            File::deleteDirectory($this->imageRoot);
+        }
+
+        parent::tearDown();
     }
 
     public function test_confirmed_record_with_matching_hash_and_onchain_true_returns_valid(): void
@@ -325,6 +342,62 @@ class BlockchainVerificationServiceTest extends TestCase
         $this->assertNotNull($job->finished_at);
     }
 
+    public function test_confirmed_anpr_image_record_with_matching_hash_returns_valid(): void
+    {
+        $this->fakeVerifyRpc(found: true);
+
+        $record = $this->createConfirmedAnprImageRecord();
+
+        $verification = $this->service->verify($record);
+
+        $this->assertSame('valid', $verification->result);
+        $this->assertSame($record->record_hash, $verification->recomputed_hash);
+    }
+
+    public function test_missing_anpr_image_entity_returns_failed(): void
+    {
+        Http::fake();
+
+        $record = BlockchainRecord::factory()->confirmed()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => '01940000-0000-7000-8000-000000000888',
+            'proof_type' => 'evidence_file',
+            'record_hash' => hash('sha256', 'missing-image'),
+        ]);
+
+        $verification = $this->service->verify($record);
+
+        $this->assertSame('failed', $verification->result);
+        $this->assertStringContainsString('no longer exists', (string) $verification->error_message);
+        Http::assertNothingSent();
+    }
+
+    public function test_anpr_image_with_unresolvable_file_recomputes_metadata_hash_deterministically(): void
+    {
+        $this->fakeVerifyRpc(found: true);
+
+        $image = AnprImage::factory()->create([
+            'file_path' => '../outside/evidence.jpg',
+            'file_size' => 1024,
+            'resolution' => '640x480',
+        ]);
+
+        $hash = app(BlockchainHashService::class)->hashEntity($image, 'evidence_file');
+
+        $record = BlockchainRecord::factory()->confirmed()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'record_hash' => $hash['record_hash'],
+            'contract_address' => '0x'.str_repeat('a', 40),
+        ]);
+
+        $verification = $this->service->verify($record);
+
+        $this->assertSame('valid', $verification->result);
+        $this->assertSame($hash['record_hash'], $verification->recomputed_hash);
+    }
+
     private function assertVerifyJobSucceeded(BlockchainRecord $record): void
     {
         $job = BlockchainJob::query()
@@ -345,12 +418,38 @@ class BlockchainVerificationServiceTest extends TestCase
             'confidence' => 0.9100,
         ]);
 
-        $hash = (new BlockchainHashService)->hashEntity($event);
+        $hash = app(BlockchainHashService::class)->hashEntity($event);
 
         return BlockchainRecord::factory()->confirmed()->create([
             'entity_type' => 'anpr_event',
             'entity_id' => $event->id,
             'proof_type' => 'entity_created',
+            'canonical_version' => 'v1',
+            'hash_algorithm' => 'sha256',
+            'record_hash' => $hash['record_hash'],
+            'contract_address' => '0x'.str_repeat('a', 40),
+        ]);
+    }
+
+    private function createConfirmedAnprImageRecord(): BlockchainRecord
+    {
+        $relativePath = 'evidence/verify-image.jpg';
+        $absolutePath = $this->imageRoot.DIRECTORY_SEPARATOR.$relativePath;
+        File::ensureDirectoryExists(dirname($absolutePath));
+        File::put($absolutePath, 'verify-image-bytes');
+
+        $image = AnprImage::factory()->create([
+            'file_path' => $relativePath,
+            'file_size' => 18,
+            'resolution' => '640x480',
+        ]);
+
+        $hash = app(BlockchainHashService::class)->hashEntity($image, 'evidence_file');
+
+        return BlockchainRecord::factory()->confirmed()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
             'canonical_version' => 'v1',
             'hash_algorithm' => 'sha256',
             'record_hash' => $hash['record_hash'],
