@@ -128,6 +128,27 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 There is a small `**App\Services`** layer for patrol aggregation/validation; **no** repository pattern and **no** domain events/jobs in `app/`.
 
+### Blockchain module architecture (M0)
+
+The Laravel backend remains the **source of truth** for operational data and blockchain **application** logic. Ethereum smart-contract tooling lives in the sibling folder **`../blockchain-ethereum-v1/`** (Solidity, Hardhat, ABI, deployment scripts)—**not** inside this Laravel tree.
+
+| Responsibility | Location in this repo | Notes |
+| --- | --- | --- |
+| Database proof rows | `app/Models/BlockchainRecord.php`, `blockchain_records` migration | Read APIs exist today; full anchoring pipeline is **not** implemented yet |
+| Future hashing & record services | `app/Services/Blockchain/` | Planned (M4–M8) |
+| Future queue jobs | `app/Jobs/` | Planned (M6–M7) |
+| Future verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | `BlockchainRecordController` is read-only today |
+| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | Planned (M4+) |
+
+**Rules:**
+
+- **Do not** add Solidity, Hardhat, `node_modules`, or contract artifacts under `backend-laravel-v1/`.
+- **Private keys** (`BLOCKCHAIN_PRIVATE_KEY`, wallet material) belong in server **`.env` only**—never in frontend, AI ANPR, Git, or public documentation.
+- **AI ANPR** and **React** call Laravel APIs only; they do not perform Ethereum RPC calls.
+- Existing `BlockchainRecord` metadata and read endpoints are **not** full on-chain anchoring until Ethereum RPC clients and queue jobs exist (M6+). There is currently **no** Web3/Ethereum client code in `app/`.
+
+See also: [`../blockchain-module.md`](../blockchain-module.md) and [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md).
+
 ### MVC and API flow
 
 ```mermaid
@@ -1194,7 +1215,7 @@ Implemented **application code** integrations in this repo:
 | Cloud storage                       | **Optional** S3 disk via `AWS_*` env vars in `config/filesystems.php`; no app code exclusively tied to S3 in `app/`. |
 
 
-**Blockchain:** `BlockchainRecord` stores `network` enum values `**ganache`** and `**sepolia**` and `environment` `**development`/`production**`. There is **no** on-chain client code (e.g. Web3 RPC calls) in this repository; only persistence and API read access.
+**Blockchain:** `BlockchainRecord` stores `network` enum values `**ganache`** and `**sepolia**` and `environment` `**development`/`production**`. There is **no** on-chain client code (e.g. Web3 RPC calls) in this repository today—only persistence and read-only API access. Solidity/Hardhat artifacts belong in **`../blockchain-ethereum-v1/`**; Laravel will consume deployment JSON and ABI paths via configuration in later milestones (M3+). Do not treat seeded or manually inserted rows as proof of live Ethereum anchoring until M6+ is implemented.
 
 ---
 
