@@ -128,9 +128,11 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 There is a small `**App\Services`** layer for patrol aggregation/validation; **no** repository pattern and **no** domain events/jobs in `app/`.
 
-### Blockchain module architecture (M0)
+### Blockchain module architecture (M0–M1)
 
 The Laravel backend remains the **source of truth** for operational data and blockchain **application** logic. Ethereum smart-contract tooling lives in the sibling folder **`../blockchain-ethereum-v1/`** (Solidity, Hardhat, ABI, deployment scripts)—**not** inside this Laravel tree.
+
+**M1 (Ethereum project):** The sibling repo now contains a compiled `EvidenceStore` contract, Hardhat tests, and—after Ganache deploy—`../blockchain-ethereum-v1/deployments/ganache/EvidenceStore.json` (address, chain ID, ABI, deployment transaction hash). **Laravel does not consume this artifact yet**; RPC clients, `config/blockchain.php`, and anchoring jobs remain **M3–M6+**.
 
 | Responsibility | Location in this repo | Notes |
 | --- | --- | --- |
@@ -147,7 +149,7 @@ The Laravel backend remains the **source of truth** for operational data and blo
 - **AI ANPR** and **React** call Laravel APIs only; they do not perform Ethereum RPC calls.
 - Existing `BlockchainRecord` metadata and read endpoints are **not** full on-chain anchoring until Ethereum RPC clients and queue jobs exist (M6+). There is currently **no** Web3/Ethereum client code in `app/`.
 
-See also: [`../blockchain-module.md`](../blockchain-module.md) and [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md).
+See also: [`../blockchain-module.md`](../blockchain-module.md), [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md), and [`../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md`](../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md).
 
 ### MVC and API flow
 
@@ -1215,7 +1217,7 @@ Implemented **application code** integrations in this repo:
 | Cloud storage                       | **Optional** S3 disk via `AWS_*` env vars in `config/filesystems.php`; no app code exclusively tied to S3 in `app/`. |
 
 
-**Blockchain:** `BlockchainRecord` stores `network` enum values `**ganache`** and `**sepolia**` and `environment` `**development`/`production**`. There is **no** on-chain client code (e.g. Web3 RPC calls) in this repository today—only persistence and read-only API access. Solidity/Hardhat artifacts belong in **`../blockchain-ethereum-v1/`**; Laravel will consume deployment JSON and ABI paths via configuration in later milestones (M3+). Do not treat seeded or manually inserted rows as proof of live Ethereum anchoring until M6+ is implemented.
+**Blockchain:** `BlockchainRecord` stores `network` enum values `**ganache`** and `**sepolia**` and `environment` `**development`/`production**`. There is **no** on-chain client code (e.g. Web3 RPC calls) in this repository today—only persistence and read-only API access. The sibling project **`../blockchain-ethereum-v1/`** completed **M1** (Hardhat + `EvidenceStore` + Ganache deployment JSON at `deployments/ganache/EvidenceStore.json`); Laravel integration of that artifact is **M3–M6+**. Do not treat seeded or manually inserted rows as proof of live Ethereum anchoring until anchoring jobs exist.
 
 ---
 
