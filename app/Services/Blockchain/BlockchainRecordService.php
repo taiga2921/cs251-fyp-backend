@@ -2,6 +2,7 @@
 
 namespace App\Services\Blockchain;
 
+use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\AnprEvent;
 use App\Models\BlockchainRecord;
 use App\Support\BlockchainCanonicalJson;
@@ -23,6 +24,7 @@ class BlockchainRecordService
         $existing = $this->findExistingProof($canonicalPayload, $canonicalVersion, $environment);
         if ($existing !== null) {
             $this->linkAnprEventIfAppropriate($entity, $existing);
+            $this->maybeQueueForAnchoring($existing);
 
             return $existing;
         }
@@ -43,6 +45,7 @@ class BlockchainRecordService
         ]);
 
         $this->linkAnprEventIfAppropriate($entity, $record);
+        $this->maybeQueueForAnchoring($record);
 
         return $record;
     }
@@ -131,5 +134,24 @@ class BlockchainRecordService
         $entity->update([
             'blockchain_record_id' => $record->id,
         ]);
+    }
+
+    private function maybeQueueForAnchoring(BlockchainRecord $record): void
+    {
+        if (! config('blockchain.enabled')) {
+            return;
+        }
+
+        if (in_array($record->status, ['queued', 'processing', 'submitted', 'confirmed'], true)) {
+            return;
+        }
+
+        if ($record->status !== 'pending') {
+            return;
+        }
+
+        $record->markAsQueued();
+
+        AnchorBlockchainRecordJob::dispatch($record->id);
     }
 }

@@ -254,6 +254,8 @@ class BlockchainDatabaseFoundationTest extends TestCase
 
     public function test_record_created_by_service_is_visible_via_read_api(): void
     {
+        config(['blockchain.enabled' => false]);
+
         $admin = $this->adminUser();
         $event = \App\Models\AnprEvent::factory()->create([
             'plate_number' => 'M5TEST01',

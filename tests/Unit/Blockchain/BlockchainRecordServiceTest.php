@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Blockchain;
 
+use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\AnprEvent;
 use App\Models\BlockchainRecord;
 use App\Models\Camera;
@@ -9,7 +10,7 @@ use App\Services\Blockchain\BlockchainHashService;
 use App\Services\Blockchain\BlockchainRecordService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Bus;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -221,12 +222,26 @@ class BlockchainRecordServiceTest extends TestCase
 
     public function test_does_not_dispatch_jobs_or_call_ethereum(): void
     {
-        Queue::fake();
+        Bus::fake();
 
         $this->service->createForEntity($this->createAnprEvent());
 
-        Queue::assertNothingPushed();
+        Bus::assertNotDispatched(AnchorBlockchainRecordJob::class);
         $this->assertSame(0, BlockchainRecord::query()->whereNotNull('tx_hash')->count());
+    }
+
+    public function test_dispatches_anchor_job_when_blockchain_is_enabled(): void
+    {
+        Bus::fake();
+
+        config(['blockchain.enabled' => true]);
+
+        $record = $this->service->createForEntity($this->createAnprEvent());
+
+        $this->assertSame('queued', $record->status);
+        Bus::assertDispatched(AnchorBlockchainRecordJob::class, function (AnchorBlockchainRecordJob $job) use ($record): bool {
+            return $job->blockchainRecordId === $record->id;
+        });
     }
 
     public function test_creates_pending_records_when_blockchain_is_disabled(): void
