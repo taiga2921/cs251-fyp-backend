@@ -2,69 +2,97 @@
 
 namespace App\Models;
 
+use Database\Factories\BlockchainRecordFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class BlockchainRecord extends Model
 {
-    use HasUuids;
+    /** @use HasFactory<BlockchainRecordFactory> */
+    use HasFactory, HasUuids;
 
-    /**
-     * The primary key type.
-     *
-     * @var string
-     */
     protected $keyType = 'string';
 
-    /**
-     * Indicates if the IDs are auto-incrementing.
-     *
-     * @var bool
-     */
     public $incrementing = false;
 
     /**
-     * The attributes that are mass assignable.
-     *
      * @var list<string>
      */
     protected $fillable = [
         'entity_type',
         'entity_id',
-        'hash',
+        'proof_type',
+        'canonical_version',
+        'hash_algorithm',
+        'record_hash',
+        'payload_summary',
         'network',
         'environment',
+        'chain_id',
+        'contract_address',
         'tx_hash',
         'block_number',
+        'confirmations',
         'status',
         'retry_count',
-        'error_message',
+        'last_error',
         'submitted_at',
         'confirmed_at',
     ];
 
     /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
+     * @return array<string, string>
      */
-    protected $casts = [
-        'submitted_at' => 'datetime',
-        'confirmed_at' => 'datetime',
-        'block_number' => 'integer',
-        'retry_count' => 'integer',
-    ];
+    protected function casts(): array
+    {
+        return [
+            'payload_summary' => 'array',
+            'chain_id' => 'integer',
+            'block_number' => 'integer',
+            'confirmations' => 'integer',
+            'retry_count' => 'integer',
+            'submitted_at' => 'datetime',
+            'confirmed_at' => 'datetime',
+        ];
+    }
 
     public function entity(): MorphTo
     {
         return $this->morphTo();
     }
 
+    public function jobs(): HasMany
+    {
+        return $this->hasMany(BlockchainJob::class);
+    }
+
+    public function verifications(): HasMany
+    {
+        return $this->hasMany(BlockchainVerification::class);
+    }
+
     public function scopePending(Builder $query): Builder
     {
         return $query->where('status', 'pending');
+    }
+
+    public function scopeQueued(Builder $query): Builder
+    {
+        return $query->where('status', 'queued');
+    }
+
+    public function scopeProcessing(Builder $query): Builder
+    {
+        return $query->where('status', 'processing');
+    }
+
+    public function scopeSubmitted(Builder $query): Builder
+    {
+        return $query->where('status', 'submitted');
     }
 
     public function scopeConfirmed(Builder $query): Builder
@@ -87,9 +115,29 @@ class BlockchainRecord extends Model
         return $query->where('environment', $environment);
     }
 
+    public function scopeForEntity(Builder $query, string $entityType, string $entityId): Builder
+    {
+        return $query->where('entity_type', $entityType)->where('entity_id', $entityId);
+    }
+
     public function isPending(): bool
     {
         return $this->status === 'pending';
+    }
+
+    public function isQueued(): bool
+    {
+        return $this->status === 'queued';
+    }
+
+    public function isProcessing(): bool
+    {
+        return $this->status === 'processing';
+    }
+
+    public function isSubmitted(): bool
+    {
+        return $this->status === 'submitted';
     }
 
     public function isConfirmed(): bool
@@ -102,22 +150,40 @@ class BlockchainRecord extends Model
         return $this->status === 'failed';
     }
 
-    public function markAsSubmitted(): bool
+    public function markAsQueued(): bool
     {
         return $this->update([
-            'status' => 'pending',
-            'submitted_at' => now(),
+            'status' => 'queued',
+            'last_error' => null,
         ]);
     }
 
-    public function markAsConfirmed(string $txHash, int $blockNumber): bool
+    public function markAsProcessing(): bool
+    {
+        return $this->update([
+            'status' => 'processing',
+        ]);
+    }
+
+    public function markAsSubmitted(?string $txHash = null): bool
+    {
+        return $this->update([
+            'status' => 'submitted',
+            'tx_hash' => $txHash ?? $this->tx_hash,
+            'submitted_at' => now(),
+            'last_error' => null,
+        ]);
+    }
+
+    public function markAsConfirmed(string $txHash, int $blockNumber, int $confirmations = 0): bool
     {
         return $this->update([
             'status' => 'confirmed',
             'tx_hash' => $txHash,
             'block_number' => $blockNumber,
+            'confirmations' => $confirmations,
             'confirmed_at' => now(),
-            'error_message' => null,
+            'last_error' => null,
         ]);
     }
 
@@ -127,7 +193,7 @@ class BlockchainRecord extends Model
 
         return $this->update([
             'status' => 'failed',
-            'error_message' => $errorMessage,
+            'last_error' => $errorMessage,
         ]);
     }
 

@@ -72,7 +72,7 @@ There is no separate SPA or mobile app in this repository; the default `package.
 ### Main modules / features
 
 - **API layer**: `routes/api.php`, controllers under `App\Http\Controllers\Api`.
-- **Domain models**: `User`, `Role`, `Zone`, `Checkpoint`, `PatrolSession`, `PatrolRoute`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, and `BlockchainRecord`.
+- **Domain models**: `User`, `Role`, `Zone`, `Checkpoint`, `PatrolSession`, `PatrolRoute`, `CheckpointEvent`, `CheckpointEventMetric`, `LocationLog`, `Camera`, `Vehicle`, `AnprEvent`, `AnprImage`, `AnprEventLog`, `BlockchainRecord`, `BlockchainJob`, and `BlockchainVerification`.
 - **Validation**: Form requests for users/zones/checkpoints/patrol-sessions/checkpoint-events/checkpoint-event-metrics/location-logs/patrol-routes/cameras (`StoreLocationLogRequest` only for location logs; `StorePatrolRouteRequest` for patrol breadcrumbs; `StoreCameraRequest` + `UpdateCameraRequest` for cameras); inline validation for auth login and some index query params.
 
 ### Runtime versions (from `composer.json`)
@@ -128,19 +128,23 @@ The app follows **Laravel’s MVC-oriented HTTP stack**:
 
 There is a small `**App\Services`** layer for patrol aggregation/validation; **no** repository pattern and **no** domain events/jobs in `app/`.
 
-### Blockchain module architecture (M0–M1)
+### Blockchain module architecture (M0–M2)
 
 The Laravel backend remains the **source of truth** for operational data and blockchain **application** logic. Ethereum smart-contract tooling lives in the sibling folder **`../blockchain-ethereum-v1/`** (Solidity, Hardhat, ABI, deployment scripts)—**not** inside this Laravel tree.
 
-**M1 (Ethereum project):** The sibling repo now contains a compiled `EvidenceStore` contract, Hardhat tests, and—after Ganache deploy—`../blockchain-ethereum-v1/deployments/ganache/EvidenceStore.json` (address, chain ID, ABI, deployment transaction hash). **Laravel does not consume this artifact yet**; RPC clients, `config/blockchain.php`, and anchoring jobs remain **M3–M6+**.
+**M1 (Ethereum project):** Sibling repo contains compiled `EvidenceStore`, Hardhat tests, and Ganache deployment JSON. Laravel does not consume that artifact yet.
+
+**M2 (Laravel database foundation):** `blockchain_records` schema aligned with `blockchain-module.md`; added `blockchain_jobs` and `blockchain_verifications` tables; models, factories, resources, and feature tests under `tests/Feature/Blockchain/`. **No** hashing, RPC clients, queue execution, or live anchoring yet (M3–M6+).
 
 | Responsibility | Location in this repo | Notes |
 | --- | --- | --- |
-| Database proof rows | `app/Models/BlockchainRecord.php`, `blockchain_records` migration | Read APIs exist today; full anchoring pipeline is **not** implemented yet |
+| Database proof rows | `BlockchainRecord`, `blockchain_records` | Read APIs exist; expanded M2 schema (`record_hash`, `proof_type`, statuses, etc.) |
+| Job audit rows | `BlockchainJob`, `blockchain_jobs` | M2 persistence only — not dispatched in M2 |
+| Verification rows | `BlockchainVerification`, `blockchain_verifications` | M2 persistence only — no verification service yet |
 | Future hashing & record services | `app/Services/Blockchain/` | Planned (M4–M8) |
 | Future queue jobs | `app/Jobs/` | Planned (M6–M7) |
-| Future verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | `BlockchainRecordController` is read-only today |
-| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | Planned (M4+) |
+| Future verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | `BlockchainRecordController` read-only today |
+| Automated tests | `tests/Feature/Blockchain/BlockchainDatabaseFoundationTest.php` | M2 foundation tests (11 cases) |
 
 **Rules:**
 
@@ -149,7 +153,7 @@ The Laravel backend remains the **source of truth** for operational data and blo
 - **AI ANPR** and **React** call Laravel APIs only; they do not perform Ethereum RPC calls.
 - Existing `BlockchainRecord` metadata and read endpoints are **not** full on-chain anchoring until Ethereum RPC clients and queue jobs exist (M6+). There is currently **no** Web3/Ethereum client code in `app/`.
 
-See also: [`../blockchain-module.md`](../blockchain-module.md), [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md), and [`../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md`](../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md).
+See also: [`../blockchain-module.md`](../blockchain-module.md), [`../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md`](../blockchain-ethereum-v1/docs/m0-architecture-finalization-and-repository-split.md), [`../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md`](../blockchain-ethereum-v1/docs/m1-ethereum-project-foundation.md), and [`../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md`](../blockchain-ethereum-v1/docs/m2-laravel-database-foundation.md).
 
 ### MVC and API flow
 
@@ -385,7 +389,9 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`** wit
 | -------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `roles`                    | `id` UUID   | `name` unique                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `users`                    | `id` UUID   | `role_id` FK → `roles` (nullable, null on delete); **soft deletes**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `blockchain_records`       | `id` UUID   | Composite **unique** `(hash, network)`; morph columns `entity_type`, `entity_id` (UUID string, indexed)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `blockchain_records`       | `id` UUID   | **M2:** proof metadata — `entity_type`, `entity_id`, `proof_type`, `canonical_version`, `hash_algorithm`, `record_hash` (char 64), nullable `payload_summary` JSON, `network` (`ganache`/`sepolia`), `environment` (`local`/`staging`/`production`), nullable on-chain fields (`chain_id`, `contract_address`, `tx_hash`, `block_number`), `confirmations`, `status` (`pending`…`failed`), `retry_count`, `last_error`, timestamps; unique `(entity_type, entity_id, proof_type, canonical_version, environment)` |
+| `blockchain_jobs`          | `id` UUID   | **M2:** FK `blockchain_record_id` → `blockchain_records` (cascade); `job_type` (`anchor`, `retry_anchor`, `verify`, `refresh_confirmation`); `status` (`queued`…`cancelled`); `attempts`, `max_attempts`, nullable schedule/audit timestamps, `last_error` |
+| `blockchain_verifications` | `id` UUID   | **M2:** FK `blockchain_record_id` → `blockchain_records` (cascade); nullable FK `verified_by` → `users`; `verification_type`; hash comparison fields (`stored_hash`, `recomputed_hash`, `onchain_hash`); `onchain_found`; `result`; `error_message`; `verified_at`; `created_at` only |
 | `zones`                    | `id` UUID   | `name` unique; `created_by` FK → `users` (nullable, null on delete)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `cameras`                  | `id` UUID   | ANPR camera configuration; UUID PK; indexed on `is_active`, `ip_address`, and `last_seen_at`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `vehicles`                 | `id` UUID   | Vehicle metadata; `plate_number` unique/indexed; status enum (`normal`,`flagged`,`whitelist`); source enum (`manual`,`auto_detected`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -406,6 +412,7 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`** wit
 `**User`**
 
 - `role()`: **belongsTo** `Role` (`role_id`).
+- `blockchainVerifications()`: **hasMany** `BlockchainVerification` via `verified_by`.
 
 `**Role`**
 
@@ -475,7 +482,18 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`** wit
 
 `**BlockchainRecord`**
 
-- `entity()`: **morphTo** (`entity_type`, `entity_id`). Database stores `entity_type` + UUID string `entity_id` (no FK to a single table).
+- `entity()`: **morphTo** (`entity_type`, `entity_id`).
+- `jobs()`: **hasMany** `BlockchainJob`.
+- `verifications()`: **hasMany** `BlockchainVerification`.
+
+`**BlockchainJob`**
+
+- `blockchainRecord()`: **belongsTo** `BlockchainRecord`.
+
+`**BlockchainVerification`**
+
+- `blockchainRecord()`: **belongsTo** `BlockchainRecord`.
+- `verifiedBy()`: **belongsTo** `User` via `verified_by`.
 
 ### Pivot tables
 

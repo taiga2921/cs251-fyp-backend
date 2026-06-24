@@ -89,6 +89,11 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(PushSubscription::class);
     }
 
+    public function blockchainVerifications(): HasMany
+    {
+        return $this->hasMany(BlockchainVerification::class, 'verified_by');
+    }
+
     public function getJWTIdentifier(): mixed
     {
         return $this->getKey();

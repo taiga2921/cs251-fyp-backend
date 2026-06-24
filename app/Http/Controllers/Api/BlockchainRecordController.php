@@ -16,9 +16,9 @@ class BlockchainRecordController extends Controller
     public function index(): AnonymousResourceCollection
     {
         $validated = request()->validate([
-            'status' => ['nullable', Rule::in(['pending', 'confirmed', 'failed'])],
+            'status' => ['nullable', Rule::in(['pending', 'queued', 'processing', 'submitted', 'confirmed', 'failed'])],
             'network' => ['nullable', Rule::in(['ganache', 'sepolia'])],
-            'environment' => ['nullable', Rule::in(['development', 'production'])],
+            'environment' => ['nullable', Rule::in(['local', 'staging', 'production'])],
             'entity_type' => ['nullable', 'string', 'max:100', 'required_with:entity_id'],
             'entity_id' => ['nullable', 'uuid', 'required_with:entity_type'],
             'sort_by' => ['nullable', Rule::in(['created_at', 'confirmed_at', 'block_number'])],
@@ -31,6 +31,9 @@ class BlockchainRecordController extends Controller
         if (! empty($validated['status'])) {
             match ($validated['status']) {
                 'pending' => $query->pending(),
+                'queued' => $query->queued(),
+                'processing' => $query->processing(),
+                'submitted' => $query->submitted(),
                 'confirmed' => $query->confirmed(),
                 'failed' => $query->failed(),
             };
