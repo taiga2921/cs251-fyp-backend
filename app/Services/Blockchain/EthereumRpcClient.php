@@ -10,6 +10,8 @@ class EthereumRpcClient
 {
     public const STORE_HASH_SELECTOR = '0x7fe88885';
 
+    public const VERIFY_HASH_SELECTOR = '0xef020f4a';
+
     public function __construct(
         private readonly BlockchainRetryService $retryService,
     ) {}
@@ -91,6 +93,21 @@ class EthereumRpcClient
         return strtolower($result);
     }
 
+    public function verifyHash(string $recordHash, ?string $contractAddress = null): bool
+    {
+        $this->assertConfiguredChainIdMatchesLiveChain();
+
+        $to = $this->resolveContractAddress($contractAddress);
+        $data = $this->encodeVerifyHashCallData($recordHash);
+
+        $result = $this->rpc('eth_call', [[
+            'to' => $to,
+            'data' => $data,
+        ], 'latest']);
+
+        return $this->decodeAbiBoolResult($result);
+    }
+
     /**
      * @return array<string, mixed>|null
      */
@@ -131,6 +148,13 @@ class EthereumRpcClient
         $normalizedHash = $this->normalizeRecordHash($recordHash);
 
         return self::STORE_HASH_SELECTOR.substr($normalizedHash, 2);
+    }
+
+    public function encodeVerifyHashCallData(string $recordHash): string
+    {
+        $normalizedHash = $this->normalizeRecordHash($recordHash);
+
+        return self::VERIFY_HASH_SELECTOR.substr($normalizedHash, 2);
     }
 
     public function normalizeRecordHash(string $recordHash): string
@@ -213,6 +237,25 @@ class EthereumRpcClient
                 "Ethereum chain ID mismatch: configured {$expectedChainId}, RPC returned {$liveChainId}."
             );
         }
+    }
+
+    private function decodeAbiBoolResult(mixed $result): bool
+    {
+        if (! is_string($result)) {
+            throw new RuntimeException('Ethereum RPC eth_call returned an invalid bool response.');
+        }
+
+        $hex = strtolower(ltrim($result, '0x'));
+
+        if ($hex === '' || $hex === '0' || $hex === str_repeat('0', 64)) {
+            return false;
+        }
+
+        if ($hex === '1' || $hex === str_repeat('0', 63).'1') {
+            return true;
+        }
+
+        throw new RuntimeException('Ethereum RPC eth_call returned a malformed ABI-encoded bool.');
     }
 
     private function isValidTransactionHash(string $txHash): bool

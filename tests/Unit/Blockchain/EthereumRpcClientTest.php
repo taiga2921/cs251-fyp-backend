@@ -195,4 +195,150 @@ class EthereumRpcClientTest extends TestCase
 
         $this->client->storeHash(str_repeat('a', 64));
     }
+
+    public function test_encodes_verify_hash_call_data_correctly(): void
+    {
+        $recordHash = str_repeat('c', 64);
+
+        $this->assertSame(
+            '0xef020f4a'.str_repeat('c', 64),
+            $this->client->encodeVerifyHashCallData($recordHash)
+        );
+    }
+
+    public function test_verify_hash_returns_true_from_abi_bool_true(): void
+    {
+        $recordHash = str_repeat('d', 64);
+
+        Http::fake(function ($request) {
+            $body = json_decode($request->body(), true);
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x539']),
+                'eth_call' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x'.str_repeat('0', 63).'1']),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test.'],
+                ], 500),
+            };
+        });
+
+        $this->assertTrue($this->client->verifyHash($recordHash));
+    }
+
+    public function test_verify_hash_returns_false_from_abi_bool_false(): void
+    {
+        $recordHash = str_repeat('e', 64);
+
+        Http::fake(function ($request) {
+            $body = json_decode($request->body(), true);
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x539']),
+                'eth_call' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x'.str_repeat('0', 64)]),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test.'],
+                ], 500),
+            };
+        });
+
+        $this->assertFalse($this->client->verifyHash($recordHash));
+    }
+
+    public function test_verify_hash_calls_configured_contract_address(): void
+    {
+        $recordHash = str_repeat('f', 64);
+        $capturedTo = null;
+
+        Http::fake(function ($request) use (&$capturedTo) {
+            $body = json_decode($request->body(), true);
+
+            if (($body['method'] ?? null) === 'eth_call') {
+                $capturedTo = $body['params'][0]['to'] ?? null;
+            }
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x539']),
+                'eth_call' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x'.str_repeat('0', 63).'1']),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test.'],
+                ], 500),
+            };
+        });
+
+        $this->client->verifyHash($recordHash);
+
+        $this->assertSame('0x'.str_repeat('a', 40), $capturedTo);
+    }
+
+    public function test_verify_hash_rejects_malformed_bool_response(): void
+    {
+        Http::fake(function ($request) {
+            $body = json_decode($request->body(), true);
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x539']),
+                'eth_call' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0xdeadbeef']),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test.'],
+                ], 500),
+            };
+        });
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('malformed ABI-encoded bool');
+
+        $this->client->verifyHash(str_repeat('a', 64));
+    }
+
+    public function test_verify_hash_performs_configured_chain_id_check(): void
+    {
+        Http::fake([
+            'http://127.0.0.1:7545' => Http::response([
+                'jsonrpc' => '2.0',
+                'id' => 1,
+                'result' => '0x1',
+            ]),
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Ethereum chain ID mismatch: configured 1337, RPC returned 1.');
+
+        $this->client->verifyHash(str_repeat('a', 64));
+    }
+
+    public function test_verify_hash_rpc_errors_are_sanitized(): void
+    {
+        config([
+            'blockchain.private_key' => '0x'.str_repeat('d', 64),
+        ]);
+
+        Http::fake([
+            'http://127.0.0.1:7545' => Http::response([
+                'jsonrpc' => '2.0',
+                'id' => 1,
+                'error' => [
+                    'code' => -32000,
+                    'message' => 'Connection refused at http://127.0.0.1:7545 key='.config('blockchain.private_key'),
+                ],
+            ]),
+        ]);
+
+        try {
+            $this->client->verifyHash(str_repeat('a', 64));
+            $this->fail('Expected verifyHash to throw on RPC error.');
+        } catch (RuntimeException $exception) {
+            $message = $exception->getMessage();
+            $this->assertStringNotContainsString('http://127.0.0.1:7545', $message);
+            $this->assertStringNotContainsString((string) config('blockchain.private_key'), $message);
+            $this->assertStringContainsString('[rpc-url-redacted]', $message);
+        }
+    }
 }

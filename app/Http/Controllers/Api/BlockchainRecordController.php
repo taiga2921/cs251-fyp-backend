@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BlockchainRecordResource;
+use App\Http\Resources\BlockchainVerificationResource;
 use App\Models\BlockchainRecord;
 use App\Services\Blockchain\BlockchainRecordService;
+use App\Services\Blockchain\BlockchainVerificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
@@ -77,6 +79,7 @@ class BlockchainRecordController extends Controller
 
         $blockchainRecord->load([
             'jobs' => fn ($query) => $query->latest('created_at'),
+            'verifications' => fn ($query) => $query->latest('verified_at'),
             'verifications.verifiedBy',
         ]);
 
@@ -98,5 +101,20 @@ class BlockchainRecordController extends Controller
         }
 
         return new BlockchainRecordResource($record);
+    }
+
+    public function verify(
+        BlockchainRecord $blockchainRecord,
+        BlockchainVerificationService $verificationService,
+    ): BlockchainVerificationResource {
+        $this->authorizePatrolMonitoring();
+
+        $verification = $verificationService->verify(
+            $blockchainRecord,
+            'manual',
+            request()->user('api'),
+        );
+
+        return new BlockchainVerificationResource($verification);
     }
 }
