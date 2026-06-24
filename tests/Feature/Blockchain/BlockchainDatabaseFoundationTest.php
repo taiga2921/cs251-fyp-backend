@@ -10,10 +10,12 @@ use App\Models\User;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
 
 class BlockchainDatabaseFoundationTest extends TestCase
 {
+    use CreatesPatrolUsers;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -165,17 +167,45 @@ class BlockchainDatabaseFoundationTest extends TestCase
         $this->assertSame('safe summary', $payload['payload_summary']['summary']);
     }
 
-    public function test_existing_blockchain_record_index_returns_updated_schema_fields(): void
+    public function test_existing_blockchain_record_show_returns_related_jobs_and_verifications(): void
     {
-        $user = User::factory()->create();
+        $admin = $this->adminUser();
         $record = BlockchainRecord::factory()->confirmed()->create();
+        $job = BlockchainJob::factory()->for($record)->successful()->create();
+        $verifier = User::factory()->create();
+        $verification = BlockchainVerification::factory()
+            ->for($record)
+            ->forUser($verifier)
+            ->valid()
+            ->create();
 
-        $this->actingAs($user, 'api')
+        $this->actingAs($admin, 'api')
             ->getJson('/api/blockchain-records/'.$record->id)
             ->assertOk()
             ->assertJsonPath('data.record_hash', $record->record_hash)
             ->assertJsonPath('data.proof_type', $record->proof_type)
             ->assertJsonPath('data.status', 'confirmed')
+            ->assertJsonPath('data.jobs.0.id', $job->id)
+            ->assertJsonPath('data.verifications.0.id', $verification->id)
+            ->assertJsonPath('data.verifications.0.verified_by_user.name', $verifier->name)
             ->assertJsonMissing(['data.hash' => $record->record_hash]);
+    }
+
+    public function test_guard_cannot_access_blockchain_record_endpoints(): void
+    {
+        $guard = $this->guardUser();
+        $record = BlockchainRecord::factory()->create();
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/blockchain-records')
+            ->assertForbidden()
+            ->assertJsonPath(
+                'message',
+                'Only administrators and security operators may perform this action.'
+            );
+
+        $this->actingAs($guard, 'api')
+            ->getJson('/api/blockchain-records/'.$record->id)
+            ->assertForbidden();
     }
 }

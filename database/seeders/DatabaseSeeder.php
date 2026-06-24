@@ -16,7 +16,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             // ZoneSeeder::class,
             // CameraSeeder::class,
-            // BlockchainRecordSeeder::class,
+            // BlockchainRecordSeeder::class, // Opt-in demo blockchain rows (safe mock metadata only).
             // PatrolSessionSeeder::class,
             // CheckpointSeeder::class,
             // CheckpointEventSeeder::class,

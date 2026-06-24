@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BlockchainRecordResource;
 use App\Models\BlockchainRecord;
@@ -10,11 +11,14 @@ use Illuminate\Validation\Rule;
 
 class BlockchainRecordController extends Controller
 {
+    use AuthorizesPatrolMonitoring;
+
     /**
      * Display a listing of the resource.
      */
     public function index(): AnonymousResourceCollection
     {
+        $this->authorizePatrolMonitoring();
         $validated = request()->validate([
             'status' => ['nullable', Rule::in(['pending', 'queued', 'processing', 'submitted', 'confirmed', 'failed'])],
             'network' => ['nullable', Rule::in(['ganache', 'sepolia'])],
@@ -66,6 +70,13 @@ class BlockchainRecordController extends Controller
      */
     public function show(BlockchainRecord $blockchainRecord): BlockchainRecordResource
     {
+        $this->authorizePatrolMonitoring();
+
+        $blockchainRecord->load([
+            'jobs',
+            'verifications.verifiedBy',
+        ]);
+
         return new BlockchainRecordResource($blockchainRecord);
     }
 }

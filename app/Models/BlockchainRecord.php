@@ -60,6 +60,14 @@ class BlockchainRecord extends Model
         ];
     }
 
+    /**
+     * Optional polymorphic link to the source application entity.
+     *
+     * `entity_type` stores a semantic blockchain module key (for example `anpr_event`,
+     * `patrol_session`) — not a guaranteed Eloquent morph class name. Do not rely on this
+     * relationship in business logic until a morph map or resolver is registered in a
+     * later milestone (M4/M5+).
+     */
     public function entity(): MorphTo
     {
         return $this->morphTo();
