@@ -13,6 +13,13 @@ use Throwable;
 
 class BlockchainVerificationService
 {
+    private const VERIFICATION_TYPES = [
+        'manual',
+        'scheduled',
+        'api',
+        'system',
+    ];
+
     public function __construct(
         private readonly BlockchainHashService $hashService,
         private readonly EthereumRpcClient $ethereumRpcClient,
@@ -24,6 +31,8 @@ class BlockchainVerificationService
         string $verificationType = 'manual',
         ?User $verifiedBy = null,
     ): BlockchainVerification {
+        $this->assertValidVerificationType($verificationType);
+
         $storedHash = $this->normalizeStoredHash((string) $record->record_hash);
 
         $job = BlockchainJob::query()->create([
@@ -158,6 +167,13 @@ class BlockchainVerificationService
             'anpr_event' => AnprEvent::query()->find($record->entity_id),
             default => null,
         };
+    }
+
+    private function assertValidVerificationType(string $verificationType): void
+    {
+        if (! in_array($verificationType, self::VERIFICATION_TYPES, true)) {
+            throw new InvalidArgumentException('Invalid blockchain verification type.');
+        }
     }
 
     private function entityResolutionErrorMessage(BlockchainRecord $record): string

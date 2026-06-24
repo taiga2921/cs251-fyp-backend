@@ -12,6 +12,8 @@ use App\Services\Blockchain\BlockchainVerificationService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class BlockchainVerificationServiceTest extends TestCase
@@ -169,6 +171,71 @@ class BlockchainVerificationServiceTest extends TestCase
 
         $this->assertSame($user->id, $verification->verified_by);
         $this->assertSame('manual', $verification->verification_type);
+    }
+
+    #[DataProvider('validVerificationTypeProvider')]
+    public function test_verify_accepts_valid_verification_types(string $verificationType): void
+    {
+        Http::fake();
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => hash('sha256', 'valid-type-'.$verificationType),
+        ]);
+
+        $verification = $this->service->verify($record, $verificationType);
+
+        $this->assertSame($verificationType, $verification->verification_type);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function validVerificationTypeProvider(): array
+    {
+        return [
+            'manual' => ['manual'],
+            'scheduled' => ['scheduled'],
+            'api' => ['api'],
+            'system' => ['system'],
+        ];
+    }
+
+    public function test_verify_rejects_invalid_verification_type(): void
+    {
+        Http::fake();
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => hash('sha256', 'invalid-type'),
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid blockchain verification type.');
+
+        $this->service->verify($record, 'bogus');
+    }
+
+    public function test_invalid_verification_type_does_not_create_job_or_verification_rows(): void
+    {
+        Http::fake();
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => hash('sha256', 'no-rows'),
+        ]);
+
+        try {
+            $this->service->verify($record, 'invalid');
+        } catch (InvalidArgumentException) {
+            // expected
+        }
+
+        $this->assertDatabaseMissing('blockchain_jobs', [
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'verify',
+        ]);
+
+        $this->assertDatabaseMissing('blockchain_verifications', [
+            'blockchain_record_id' => $record->id,
+        ]);
     }
 
     public function test_verify_job_row_is_created_with_job_type_verify(): void

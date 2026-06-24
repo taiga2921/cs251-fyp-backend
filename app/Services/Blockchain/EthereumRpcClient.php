@@ -245,13 +245,19 @@ class EthereumRpcClient
             throw new RuntimeException('Ethereum RPC eth_call returned an invalid bool response.');
         }
 
-        $hex = strtolower(ltrim($result, '0x'));
+        $normalized = strtolower(trim($result));
 
-        if ($hex === '' || $hex === '0' || $hex === str_repeat('0', 64)) {
+        if (! preg_match('/^0x[a-f0-9]{64}$/', $normalized)) {
+            throw new RuntimeException('Ethereum RPC eth_call returned a malformed ABI-encoded bool.');
+        }
+
+        $hex = substr($normalized, 2);
+
+        if ($hex === str_repeat('0', 64)) {
             return false;
         }
 
-        if ($hex === '1' || $hex === str_repeat('0', 63).'1') {
+        if ($hex === str_repeat('0', 63).'1') {
             return true;
         }
 
