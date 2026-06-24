@@ -41,14 +41,11 @@ class AnchorBlockchainRecordJob implements ShouldQueue
 
         if ($record->isConfirmed()) {
             if ($this->isRetryAttempt && $this->expectedBlockchainJobId !== null) {
-                $queuedJob = BlockchainJob::query()->find($this->expectedBlockchainJobId);
-
-                if ($queuedJob !== null && $queuedJob->status === 'queued') {
-                    $retryService->markRetryJobCancelled(
-                        $queuedJob,
-                        BlockchainRetryService::ACTIVE_RECORD_RETRY_REASON,
-                    );
-                }
+                $retryService->markExpectedRetryJobCancelledForRecord(
+                    $this->expectedBlockchainJobId,
+                    $record,
+                    BlockchainRetryService::ACTIVE_RECORD_RETRY_REASON,
+                );
             }
 
             return;
@@ -59,9 +56,11 @@ class AnchorBlockchainRecordJob implements ShouldQueue
             $staleReason = $retryService->staleRetryReason($record, $queuedJob);
 
             if ($staleReason !== null) {
-                if ($queuedJob !== null) {
-                    $retryService->markRetryJobCancelled($queuedJob, $staleReason);
-                }
+                $retryService->markExpectedRetryJobCancelledForRecord(
+                    $this->expectedBlockchainJobId,
+                    $record,
+                    $staleReason,
+                );
 
                 return;
             }

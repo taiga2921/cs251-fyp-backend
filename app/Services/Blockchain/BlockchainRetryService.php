@@ -125,6 +125,32 @@ class BlockchainRetryService
         ]);
     }
 
+    public function markExpectedRetryJobCancelledForRecord(
+        string $blockchainJobId,
+        BlockchainRecord $record,
+        string $reason,
+    ): void {
+        $job = BlockchainJob::query()->find($blockchainJobId);
+
+        if ($job === null) {
+            return;
+        }
+
+        if ($job->blockchain_record_id !== $record->id) {
+            return;
+        }
+
+        if ($job->job_type !== 'retry_anchor') {
+            return;
+        }
+
+        if ($job->status !== 'queued') {
+            return;
+        }
+
+        $this->markRetryJobCancelled($job, $reason);
+    }
+
     public function cancelQueuedRetryJobs(string $blockchainRecordId, ?string $exceptJobId = null): int
     {
         $query = BlockchainJob::query()

@@ -466,6 +466,200 @@ class BlockchainRetryTest extends TestCase
         ];
     }
 
+    public function test_confirmed_record_cancels_only_matching_queued_retry_job(): void
+    {
+        Http::fake(function (): never {
+            $this->fail('Confirmed short-circuit should not call JSON-RPC.');
+        });
+
+        $record = BlockchainRecord::factory()->confirmed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 2,
+        ]);
+
+        $queuedJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 3,
+            'max_attempts' => 5,
+            'next_attempt_at' => now()->addSeconds(10),
+        ]);
+
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedJob->id);
+
+        $queuedJob->refresh();
+        $record->refresh();
+
+        $this->assertSame('confirmed', $record->status);
+        $this->assertSame('cancelled', $queuedJob->status);
+        $this->assertNotNull($queuedJob->finished_at);
+        $this->assertStringContainsString(
+            'record is already active',
+            (string) $queuedJob->last_error
+        );
+    }
+
+    #[DataProvider('unrelatedExpectedJobProvider')]
+    public function test_confirmed_record_does_not_cancel_unrelated_expected_job_id(string $scenario): void
+    {
+        Http::fake(function (): never {
+            $this->fail('Confirmed short-circuit should not call JSON-RPC.');
+        });
+
+        $confirmedRecord = BlockchainRecord::factory()->confirmed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 2,
+        ]);
+
+        $otherRecord = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('b', 64),
+            'contract_address' => '0x'.str_repeat('b', 40),
+            'retry_count' => 1,
+        ]);
+
+        $expectedJob = match ($scenario) {
+            'other_record' => BlockchainJob::factory()->for($otherRecord)->create([
+                'job_type' => 'retry_anchor',
+                'status' => 'queued',
+                'attempts' => 2,
+            ]),
+            'wrong_job_type' => BlockchainJob::factory()->for($confirmedRecord)->create([
+                'job_type' => 'anchor',
+                'status' => 'queued',
+                'attempts' => 3,
+            ]),
+            'wrong_status' => BlockchainJob::factory()->for($confirmedRecord)->create([
+                'job_type' => 'retry_anchor',
+                'status' => 'processing',
+                'attempts' => 3,
+                'started_at' => now(),
+            ]),
+            default => throw new \InvalidArgumentException("Unsupported scenario: {$scenario}"),
+        };
+
+        $originalStatus = $expectedJob->status;
+
+        $this->runAnchorJob(
+            $confirmedRecord,
+            isRetryAttempt: true,
+            expectedBlockchainJobId: $expectedJob->id,
+        );
+
+        $expectedJob->refresh();
+        $confirmedRecord->refresh();
+
+        $this->assertSame($originalStatus, $expectedJob->status);
+        $this->assertNull($expectedJob->finished_at);
+        $this->assertSame('confirmed', $confirmedRecord->status);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function unrelatedExpectedJobProvider(): array
+    {
+        return [
+            'other_record' => ['other_record'],
+            'wrong_job_type' => ['wrong_job_type'],
+            'wrong_status' => ['wrong_status'],
+        ];
+    }
+
+    public function test_stale_retry_does_not_cancel_unrelated_expected_job_id(): void
+    {
+        Http::fake(function (): never {
+            $this->fail('Stale retry job should not call JSON-RPC.');
+        });
+
+        $recordA = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 2,
+        ]);
+
+        $recordB = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('b', 64),
+            'contract_address' => '0x'.str_repeat('b', 40),
+            'retry_count' => 1,
+        ]);
+
+        $otherRecordJob = BlockchainJob::factory()->for($recordB)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+        ]);
+
+        $this->runAnchorJob(
+            $recordA,
+            isRetryAttempt: true,
+            expectedBlockchainJobId: $otherRecordJob->id,
+        );
+
+        $otherRecordJob->refresh();
+        $recordA->refresh();
+
+        $this->assertSame('queued', $otherRecordJob->status);
+        $this->assertNull($otherRecordJob->finished_at);
+        $this->assertSame(2, $recordA->retry_count);
+    }
+
+    #[DataProvider('invalidStaleExpectedJobProvider')]
+    public function test_stale_retry_does_not_cancel_wrong_type_or_status_job(string $scenario): void
+    {
+        Http::fake(function (): never {
+            $this->fail('Stale retry job should not call JSON-RPC.');
+        });
+
+        $record = BlockchainRecord::factory()->failed()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'retry_count' => 1,
+        ]);
+
+        $expectedJob = match ($scenario) {
+            'wrong_job_type' => BlockchainJob::factory()->for($record)->create([
+                'job_type' => 'anchor',
+                'status' => 'queued',
+                'attempts' => 2,
+            ]),
+            'wrong_status' => BlockchainJob::factory()->for($record)->create([
+                'job_type' => 'retry_anchor',
+                'status' => 'processing',
+                'attempts' => 2,
+                'started_at' => now(),
+            ]),
+            default => throw new \InvalidArgumentException("Unsupported scenario: {$scenario}"),
+        };
+
+        $originalStatus = $expectedJob->status;
+
+        $this->runAnchorJob(
+            $record,
+            isRetryAttempt: true,
+            expectedBlockchainJobId: $expectedJob->id,
+        );
+
+        $expectedJob->refresh();
+        $record->refresh();
+
+        $this->assertSame($originalStatus, $expectedJob->status);
+        $this->assertNull($expectedJob->finished_at);
+        $this->assertSame(1, $record->retry_count);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function invalidStaleExpectedJobProvider(): array
+    {
+        return [
+            'wrong_job_type' => ['wrong_job_type'],
+            'wrong_status' => ['wrong_status'],
+        ];
+    }
+
     public function test_manual_retry_cancels_superseded_queued_retry_jobs(): void
     {
         Queue::fake();
