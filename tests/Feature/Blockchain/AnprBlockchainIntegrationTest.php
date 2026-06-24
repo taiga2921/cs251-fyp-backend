@@ -8,12 +8,15 @@ use App\Models\AnprImage;
 use App\Models\BlockchainRecord;
 use App\Models\Camera;
 use App\Services\Blockchain\BlockchainHashService;
+use App\Services\Blockchain\BlockchainRecordService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
 
@@ -207,6 +210,106 @@ class AnprBlockchainIntegrationTest extends TestCase
             return $job->blockchainRecordId === $record->id;
         });
         Http::assertNothingSent();
+
+        $response
+            ->assertJsonPath('data.blockchain_proof.entity_type', 'anpr_image')
+            ->assertJsonPath('data.blockchain_proof.proof_type', 'evidence_file')
+            ->assertJsonPath('data.blockchain_proof.status', 'queued')
+            ->assertJsonMissingPath('data.blockchain_proof.record_hash');
+    }
+
+    public function test_anpr_image_show_includes_blockchain_proof_when_enabled(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => true]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('plate.jpg', 200, 'image/jpeg');
+
+        $uploadResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'plate',
+                'image' => $file,
+            ])
+            ->assertOk();
+
+        $imageId = $uploadResponse->json('data.id');
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-images/'.$imageId)
+            ->assertOk()
+            ->assertJsonPath('data.blockchain_proof.entity_type', 'anpr_image')
+            ->assertJsonPath('data.blockchain_proof.proof_type', 'evidence_file')
+            ->assertJsonPath('data.blockchain_proof.status', 'queued');
+    }
+
+    public function test_direct_anpr_image_responses_omit_blockchain_proof_when_disabled(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => false]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $file = UploadedFile::fake()->create('full.jpg', 200, 'image/jpeg');
+
+        $uploadResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $file,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.blockchain_proof', null);
+
+        $imageId = $uploadResponse->json('data.id');
+
+        $this->actingAs($admin, 'api')
+            ->getJson('/api/anpr-images/'.$imageId)
+            ->assertOk()
+            ->assertJsonPath('data.blockchain_proof', null);
+    }
+
+    public function test_automatic_blockchain_proof_failure_logs_sanitized_warning_and_preserves_anpr_event(): void
+    {
+        Log::spy();
+        Bus::fake();
+        config([
+            'blockchain.enabled' => true,
+            'blockchain.private_key' => '0x'.str_repeat('d', 64),
+        ]);
+
+        $privateKey = (string) config('blockchain.private_key');
+        $sensitiveMessage = 'RPC failed at http://127.0.0.1:7545 key='.$privateKey;
+
+        $this->mock(BlockchainRecordService::class, function ($mock) use ($sensitiveMessage): void {
+            $mock->shouldReceive('createForEntity')
+                ->andThrow(new RuntimeException($sensitiveMessage));
+        });
+
+        $admin = $this->adminUser();
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/anpr-events', $this->anprEventPayload())
+            ->assertCreated()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('anpr_events', [
+            'id' => $response->json('data.id'),
+            'plate_number' => 'M10001',
+        ]);
+        $this->assertDatabaseCount('blockchain_records', 0);
+
+        Log::shouldHaveReceived('warning')
+            ->once()
+            ->withArgs(function (string $message, array $context) use ($privateKey, $sensitiveMessage): bool {
+                return $message === 'Automatic blockchain proof creation failed for ANPR entity.'
+                    && isset($context['error'])
+                    && is_string($context['error'])
+                    && ! str_contains($context['error'], 'http://127.0.0.1:7545')
+                    && ! str_contains($context['error'], $privateKey)
+                    && ! str_contains($context['error'], $sensitiveMessage)
+                    && str_contains($context['error'], '[rpc-url-redacted]');
+            });
     }
 
     public function test_anpr_event_show_exposes_safe_blockchain_proof_fields(): void

@@ -12,6 +12,7 @@ class BlockchainAnprIntegrationService
 {
     public function __construct(
         private readonly BlockchainRecordService $recordService,
+        private readonly BlockchainRetryService $retryService,
     ) {}
 
     public function anchorEventCreation(AnprEvent $event): ?BlockchainRecord
@@ -41,7 +42,7 @@ class BlockchainAnprIntegrationService
                 'entity_type' => $entity instanceof AnprEvent ? 'anpr_event' : 'anpr_image',
                 'entity_id' => (string) $entity->getKey(),
                 'proof_type' => $proofType,
-                'error' => $exception->getMessage(),
+                'error' => $this->retryService->sanitizeError($exception->getMessage()),
             ]);
 
             return null;

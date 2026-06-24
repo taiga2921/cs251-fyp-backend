@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class AnprImage extends Model
 {
@@ -43,5 +44,12 @@ class AnprImage extends Model
     public function anprEvent(): BelongsTo
     {
         return $this->belongsTo(AnprEvent::class);
+    }
+
+    public function blockchainRecord(): HasOne
+    {
+        return $this->hasOne(BlockchainRecord::class, 'entity_id', 'id')
+            ->where('blockchain_records.entity_type', 'anpr_image')
+            ->where('blockchain_records.proof_type', 'evidence_file');
     }
 }

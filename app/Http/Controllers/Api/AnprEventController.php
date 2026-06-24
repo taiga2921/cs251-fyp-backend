@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AnprEventResource;
 use App\Models\AnprEvent;
-use App\Models\BlockchainRecord;
 use App\Services\Anpr\AnprVehicleLinker;
 use App\Services\Blockchain\BlockchainAnprIntegrationService;
 use Illuminate\Http\JsonResponse;
@@ -196,8 +195,7 @@ class AnprEventController extends Controller
 
             $this->blockchainIntegration->anchorEventCreation($anprEvent);
             $anprEvent->refresh();
-            $anprEvent->load($this->detailRelations());
-            $this->attachImageBlockchainProofs($anprEvent);
+            $this->loadDetailRelations($anprEvent);
 
             return response()->json([
                 'success' => true,
@@ -212,8 +210,7 @@ class AnprEventController extends Controller
     public function show(AnprEvent $anprEvent): JsonResponse
     {
         try {
-            $anprEvent->load($this->detailRelations());
-            $this->attachImageBlockchainProofs($anprEvent);
+            $this->loadDetailRelations($anprEvent);
 
             return response()->json([
                 'success' => true,
@@ -281,7 +278,7 @@ class AnprEventController extends Controller
             }
 
             $anprEvent->update($validated);
-            $anprEvent->load($this->detailRelations());
+            $this->loadDetailRelations($anprEvent);
 
             return response()->json([
                 'success' => true,
@@ -304,20 +301,12 @@ class AnprEventController extends Controller
         }
     }
 
-    protected function attachImageBlockchainProofs(AnprEvent $anprEvent): void
+    protected function loadDetailRelations(AnprEvent $anprEvent): void
     {
-        if (! $anprEvent->relationLoaded('images') || $anprEvent->images->isEmpty()) {
-            return;
-        }
+        $anprEvent->load($this->detailRelations());
 
-        $proofs = BlockchainRecord::query()
-            ->where('entity_type', 'anpr_image')
-            ->whereIn('entity_id', $anprEvent->images->pluck('id'))
-            ->get()
-            ->keyBy('entity_id');
-
-        foreach ($anprEvent->images as $image) {
-            $image->setRelation('blockchainRecord', $proofs->get($image->id));
+        if ($anprEvent->relationLoaded('images')) {
+            $anprEvent->load('images.blockchainRecord');
         }
     }
 

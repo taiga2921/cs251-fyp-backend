@@ -41,7 +41,7 @@ class AnprImageController extends Controller
             }
 
             $validated = $validator->validated();
-            $query = AnprImage::query()->with('anprEvent')->latest();
+            $query = AnprImage::query()->with(['anprEvent', 'blockchainRecord'])->latest();
 
             if (array_key_exists('anpr_event_id', $validated)) {
                 $query->where('anpr_event_id', $validated['anpr_event_id']);
@@ -89,7 +89,7 @@ class AnprImageController extends Controller
 
             $anprImage = AnprImage::query()->create($validator->validated());
             $this->blockchainIntegration->anchorImageEvidence($anprImage);
-            $anprImage->load('anprEvent');
+            $this->loadImageResponseRelations($anprImage);
 
             return response()->json([
                 'success' => true,
@@ -104,7 +104,7 @@ class AnprImageController extends Controller
     public function show(AnprImage $anprImage): JsonResponse
     {
         try {
-            $anprImage->load('anprEvent');
+            $this->loadImageResponseRelations($anprImage);
 
             return response()->json([
                 'success' => true,
@@ -193,7 +193,7 @@ class AnprImageController extends Controller
             );
 
             $this->blockchainIntegration->anchorImageEvidence($anprImage);
-            $anprImage->load('anprEvent');
+            $this->loadImageResponseRelations($anprImage);
 
             return response()->json([
                 'success' => true,
@@ -226,7 +226,7 @@ class AnprImageController extends Controller
             }
 
             $anprImage->update($validator->validated());
-            $anprImage->load('anprEvent');
+            $this->loadImageResponseRelations($anprImage);
 
             return response()->json([
                 'success' => true,
@@ -247,6 +247,11 @@ class AnprImageController extends Controller
         } catch (Throwable $e) {
             return $this->errorResponse($e);
         }
+    }
+
+    protected function loadImageResponseRelations(AnprImage $anprImage): AnprImage
+    {
+        return $anprImage->load(['anprEvent', 'blockchainRecord']);
     }
 
     protected function errorResponse(Throwable $e): JsonResponse
