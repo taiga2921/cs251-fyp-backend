@@ -11,6 +11,7 @@ use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class BlockchainAnchoringTest extends TestCase
@@ -89,8 +90,10 @@ class BlockchainAnchoringTest extends TestCase
         $this->assertSame(0, BlockchainJob::query()->count());
     }
 
-    public function test_rpc_failure_marks_record_and_job_as_failed(): void
+    public function test_rpc_failure_marks_record_and_job_as_failed_with_retry_scheduled(): void
     {
+        Queue::fake();
+
         Http::fake([
             'http://127.0.0.1:7545' => Http::response([
                 'jsonrpc' => '2.0',
@@ -107,14 +110,17 @@ class BlockchainAnchoringTest extends TestCase
 
         $record->refresh();
 
-        $this->assertSame('failed', $record->status);
+        $this->assertSame('queued', $record->status);
+        $this->assertSame(1, $record->retry_count);
         $this->assertStringContainsString('Sender account not authorized', (string) $record->last_error);
         $this->assertStringNotContainsString('http://', (string) $record->last_error);
 
         $job = BlockchainJob::query()->where('blockchain_record_id', $record->id)->first();
         $this->assertNotNull($job);
         $this->assertSame('failed', $job->status);
+        $this->assertSame('anchor', $job->job_type);
         $this->assertNotNull($job->finished_at);
+        $this->assertNotNull($job->next_attempt_at);
     }
 
     public function test_record_service_dispatches_anchoring_only_when_blockchain_is_enabled(): void
@@ -148,10 +154,13 @@ class BlockchainAnchoringTest extends TestCase
         ]);
     }
 
-    private function runAnchorJob(BlockchainRecord $record): void
+    private function runAnchorJob(BlockchainRecord $record, bool $isRetryAttempt = false): void
     {
-        (new AnchorBlockchainRecordJob($record->id))
-            ->handle(app(EthereumRpcClient::class));
+        (new AnchorBlockchainRecordJob($record->id, $isRetryAttempt))
+            ->handle(
+                app(EthereumRpcClient::class),
+                app(\App\Services\Blockchain\BlockchainRetryService::class),
+            );
     }
 
     private function fakeSuccessfulAnchoringRpc(

@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
+use App\Services\Blockchain\BlockchainRetryService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -20,12 +21,17 @@ class AnchorBlockchainRecordJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
+    public int $tries = 1;
+
     public function __construct(
         public readonly string $blockchainRecordId,
+        public readonly bool $isRetryAttempt = false,
     ) {}
 
-    public function handle(EthereumRpcClient $ethereumRpcClient): void
-    {
+    public function handle(
+        EthereumRpcClient $ethereumRpcClient,
+        BlockchainRetryService $retryService,
+    ): void {
         $record = BlockchainRecord::query()->find($this->blockchainRecordId);
 
         if ($record === null) {
@@ -36,11 +42,18 @@ class AnchorBlockchainRecordJob implements ShouldQueue
             return;
         }
 
+        $attemptNumber = max(1, (int) $record->retry_count + 1);
+        $blockchainJob = $this->createJobRow($record, $attemptNumber, $retryService);
+
         $record->markAsProcessing();
 
-        $blockchainJob = $this->createOrUpdateAnchorJob($record);
-
         try {
+            if (is_string($record->tx_hash) && $record->tx_hash !== '') {
+                $this->confirmFromExistingTransaction($record, $ethereumRpcClient, $blockchainJob);
+
+                return;
+            }
+
             $txHash = $ethereumRpcClient->storeHash(
                 $record->record_hash,
                 $record->contract_address
@@ -48,83 +61,173 @@ class AnchorBlockchainRecordJob implements ShouldQueue
 
             $record->markAsSubmitted($txHash);
 
-            $receipt = $ethereumRpcClient->transactionReceipt($txHash);
-
-            if ($receipt === null) {
-                throw new RuntimeException('Transaction receipt is not yet available.');
-            }
-
-            if (! $this->receiptIndicatesSuccess($receipt)) {
-                throw new RuntimeException('Ethereum transaction receipt indicates failure.');
-            }
-
-            $blockNumber = $ethereumRpcClient->hexQuantityToInt((string) $receipt['blockNumber']);
-            $confirmations = $ethereumRpcClient->confirmationsForReceipt($receipt);
-            $requiredConfirmations = max(1, (int) config('blockchain.confirmation_blocks', 1));
-
-            if ($confirmations >= $requiredConfirmations) {
-                $record->markAsConfirmed($txHash, $blockNumber, $confirmations);
-            } else {
-                $record->update([
-                    'tx_hash' => $txHash,
-                    'block_number' => $blockNumber,
-                    'confirmations' => $confirmations,
-                    'status' => 'submitted',
-                    'submitted_at' => $record->submitted_at ?? now(),
-                    'last_error' => null,
-                ]);
-            }
-
-            $blockchainJob->update([
-                'status' => 'success',
-                'finished_at' => now(),
-                'last_error' => null,
-            ]);
+            $this->confirmFromReceipt($record, $ethereumRpcClient, $blockchainJob, $txHash);
         } catch (Throwable $exception) {
-            $sanitizedError = $this->sanitizeErrorMessage($exception->getMessage());
-
-            $record->markAsFailed($sanitizedError);
-
-            $blockchainJob->update([
-                'status' => 'failed',
-                'finished_at' => now(),
-                'last_error' => $sanitizedError,
-            ]);
+            $this->handleFailure($record, $blockchainJob, $exception, $retryService, $attemptNumber);
         }
     }
 
-    private function createOrUpdateAnchorJob(BlockchainRecord $record): BlockchainJob
-    {
-        $blockchainJob = BlockchainJob::query()
-            ->where('blockchain_record_id', $record->id)
-            ->where('job_type', 'anchor')
-            ->whereIn('status', ['queued', 'processing'])
-            ->latest('created_at')
-            ->first();
+    private function createJobRow(
+        BlockchainRecord $record,
+        int $attemptNumber,
+        BlockchainRetryService $retryService,
+    ): BlockchainJob {
+        if (! $this->isRetryAttempt) {
+            $existingAnchorJob = BlockchainJob::query()
+                ->where('blockchain_record_id', $record->id)
+                ->where('job_type', 'anchor')
+                ->whereIn('status', ['queued', 'processing'])
+                ->latest('created_at')
+                ->first();
 
-        $maxAttempts = max(0, (int) config('blockchain.max_retries', 5));
+            if ($existingAnchorJob !== null) {
+                $existingAnchorJob->update([
+                    'status' => 'processing',
+                    'attempts' => $attemptNumber,
+                    'max_attempts' => $retryService->maxAttempts(),
+                    'started_at' => now(),
+                    'finished_at' => null,
+                    'last_error' => null,
+                    'next_attempt_at' => null,
+                ]);
 
-        if ($blockchainJob === null) {
-            return BlockchainJob::query()->create([
-                'blockchain_record_id' => $record->id,
-                'job_type' => 'anchor',
-                'status' => 'processing',
-                'attempts' => 1,
-                'max_attempts' => $maxAttempts,
-                'started_at' => now(),
+                return $existingAnchorJob->refresh();
+            }
+        }
+
+        if ($this->isRetryAttempt) {
+            $existingRetryJob = BlockchainJob::query()
+                ->where('blockchain_record_id', $record->id)
+                ->where('job_type', 'retry_anchor')
+                ->whereIn('status', ['queued', 'processing'])
+                ->latest('created_at')
+                ->first();
+
+            if ($existingRetryJob !== null) {
+                $existingRetryJob->update([
+                    'status' => 'processing',
+                    'attempts' => $attemptNumber,
+                    'max_attempts' => $retryService->maxAttempts(),
+                    'started_at' => now(),
+                    'finished_at' => null,
+                    'last_error' => null,
+                    'next_attempt_at' => null,
+                ]);
+
+                return $existingRetryJob->refresh();
+            }
+        }
+
+        return BlockchainJob::query()->create([
+            'blockchain_record_id' => $record->id,
+            'job_type' => $this->isRetryAttempt ? 'retry_anchor' : 'anchor',
+            'status' => 'processing',
+            'attempts' => $attemptNumber,
+            'max_attempts' => $retryService->maxAttempts(),
+            'started_at' => now(),
+        ]);
+    }
+
+    /**
+     * @throws RuntimeException
+     */
+    private function confirmFromExistingTransaction(
+        BlockchainRecord $record,
+        EthereumRpcClient $ethereumRpcClient,
+        BlockchainJob $blockchainJob,
+    ): void {
+        $txHash = (string) $record->tx_hash;
+
+        $receipt = $ethereumRpcClient->transactionReceipt($txHash);
+
+        if ($receipt === null) {
+            throw new RuntimeException('Transaction receipt is not yet available.');
+        }
+
+        $this->confirmFromReceipt($record, $ethereumRpcClient, $blockchainJob, $txHash, $receipt);
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $receipt
+     *
+     * @throws RuntimeException
+     */
+    private function confirmFromReceipt(
+        BlockchainRecord $record,
+        EthereumRpcClient $ethereumRpcClient,
+        BlockchainJob $blockchainJob,
+        string $txHash,
+        ?array $receipt = null,
+    ): void {
+        $receipt ??= $ethereumRpcClient->transactionReceipt($txHash);
+
+        if ($receipt === null) {
+            throw new RuntimeException('Transaction receipt is not yet available.');
+        }
+
+        if (! $this->receiptIndicatesSuccess($receipt)) {
+            throw new RuntimeException('Ethereum transaction receipt indicates failure.');
+        }
+
+        $blockNumber = $ethereumRpcClient->hexQuantityToInt((string) $receipt['blockNumber']);
+        $confirmations = $ethereumRpcClient->confirmationsForReceipt($receipt);
+        $requiredConfirmations = max(1, (int) config('blockchain.confirmation_blocks', 1));
+
+        if ($confirmations >= $requiredConfirmations) {
+            $record->markAsConfirmed($txHash, $blockNumber, $confirmations);
+        } else {
+            $record->update([
+                'tx_hash' => $txHash,
+                'block_number' => $blockNumber,
+                'confirmations' => $confirmations,
+                'status' => 'submitted',
+                'submitted_at' => $record->submitted_at ?? now(),
+                'last_error' => null,
             ]);
         }
 
         $blockchainJob->update([
-            'status' => 'processing',
-            'attempts' => $blockchainJob->attempts + 1,
-            'max_attempts' => $maxAttempts,
-            'started_at' => now(),
-            'finished_at' => null,
+            'status' => 'success',
+            'finished_at' => now(),
             'last_error' => null,
+            'next_attempt_at' => null,
+        ]);
+    }
+
+    private function handleFailure(
+        BlockchainRecord $record,
+        BlockchainJob $blockchainJob,
+        Throwable $exception,
+        BlockchainRetryService $retryService,
+        int $attemptNumber,
+    ): void {
+        $sanitizedError = $retryService->sanitizeError($exception->getMessage());
+
+        $record->markAsFailed($sanitizedError);
+
+        $blockchainJob->update([
+            'status' => 'failed',
+            'finished_at' => now(),
+            'last_error' => $sanitizedError,
         ]);
 
-        return $blockchainJob->refresh();
+        if (! $retryService->canRetry($attemptNumber)) {
+            $blockchainJob->update(['next_attempt_at' => null]);
+
+            return;
+        }
+
+        $nextAttemptAt = $retryService->nextAttemptAt($attemptNumber);
+
+        $blockchainJob->update([
+            'next_attempt_at' => $nextAttemptAt,
+        ]);
+
+        $record->update([
+            'status' => 'queued',
+        ]);
+
+        self::dispatch($record->id, isRetryAttempt: true)->delay($nextAttemptAt);
     }
 
     /**
@@ -147,13 +250,5 @@ class AnchorBlockchainRecordJob implements ShouldQueue
         }
 
         return in_array(strtolower($status), ['0x1', '0x01', '1'], true);
-    }
-
-    private function sanitizeErrorMessage(string $message): string
-    {
-        $message = preg_replace('/https?:\/\/\S+/', '[rpc-url-redacted]', $message) ?? $message;
-        $message = preg_replace('/0x[a-fA-F0-9]{64}/', '[secret-redacted]', $message) ?? $message;
-
-        return mb_substr(trim($message), 0, 1000);
     }
 }

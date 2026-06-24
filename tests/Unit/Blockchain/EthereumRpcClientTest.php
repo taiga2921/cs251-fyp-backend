@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Blockchain;
 
+use App\Services\Blockchain\BlockchainRetryService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
@@ -24,7 +25,7 @@ class EthereumRpcClientTest extends TestCase
             'blockchain.wallet_address' => '0x'.str_repeat('b', 40),
         ]);
 
-        $this->client = new EthereumRpcClient;
+        $this->client = new EthereumRpcClient(new BlockchainRetryService);
     }
 
     public function test_encodes_store_hash_transaction_data_correctly(): void

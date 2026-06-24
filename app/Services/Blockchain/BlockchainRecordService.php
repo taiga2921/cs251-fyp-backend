@@ -4,9 +4,11 @@ namespace App\Services\Blockchain;
 
 use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\AnprEvent;
+use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
 use App\Support\BlockchainCanonicalJson;
 use Illuminate\Database\Eloquent\Model;
+use InvalidArgumentException;
 
 class BlockchainRecordService
 {
@@ -134,6 +136,33 @@ class BlockchainRecordService
         $entity->update([
             'blockchain_record_id' => $record->id,
         ]);
+    }
+
+    public function retryFailedRecord(BlockchainRecord $record): BlockchainRecord
+    {
+        if (! $record->isFailed()) {
+            throw new InvalidArgumentException('Only failed blockchain records can be retried.');
+        }
+
+        $maxAttempts = max(1, (int) config('blockchain.max_retries', 5));
+        $attemptNumber = max(1, (int) $record->retry_count + 1);
+
+        BlockchainJob::query()->create([
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => $attemptNumber,
+            'max_attempts' => $maxAttempts,
+            'next_attempt_at' => now(),
+        ]);
+
+        $record->update([
+            'status' => 'queued',
+        ]);
+
+        AnchorBlockchainRecordJob::dispatch($record->id, isRetryAttempt: true);
+
+        return $record->fresh(['jobs']);
     }
 
     private function maybeQueueForAnchoring(BlockchainRecord $record): void

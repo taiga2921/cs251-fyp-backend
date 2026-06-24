@@ -10,6 +10,10 @@ class EthereumRpcClient
 {
     public const STORE_HASH_SELECTOR = '0x7fe88885';
 
+    public function __construct(
+        private readonly BlockchainRetryService $retryService,
+    ) {}
+
     public function chainId(): int
     {
         $result = $this->rpc('eth_chainId');
@@ -271,9 +275,6 @@ class EthereumRpcClient
 
     private function sanitizeMessage(string $message): string
     {
-        $message = preg_replace('/https?:\/\/\S+/', '[rpc-url-redacted]', $message) ?? $message;
-        $message = preg_replace('/0x[a-fA-F0-9]{64}/', '[secret-redacted]', $message) ?? $message;
-
-        return trim($message);
+        return $this->retryService->sanitizeError($message);
     }
 }

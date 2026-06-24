@@ -36,6 +36,8 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('blockchain-records', BlockchainRecordController::class)->only(['index', 'show']);
 
     Route::middleware('admin')->group(function (): void {
+        Route::post('blockchain-records/{blockchain_record}/retry', [BlockchainRecordController::class, 'retry'])
+            ->name('blockchain-records.retry');
         Route::apiResource('roles', RoleController::class)->only(['index', 'show']);
         Route::apiResource('users', UserController::class);
         Route::post('users/{user}/restore', [UserController::class, 'restore']);

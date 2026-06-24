@@ -6,8 +6,11 @@ use App\Http\Controllers\Concerns\AuthorizesPatrolMonitoring;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\BlockchainRecordResource;
 use App\Models\BlockchainRecord;
+use App\Services\Blockchain\BlockchainRecordService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
+use InvalidArgumentException;
 
 class BlockchainRecordController extends Controller
 {
@@ -78,5 +81,22 @@ class BlockchainRecordController extends Controller
         ]);
 
         return new BlockchainRecordResource($blockchainRecord);
+    }
+
+    public function retry(
+        BlockchainRecord $blockchainRecord,
+        BlockchainRecordService $blockchainRecordService,
+    ): BlockchainRecordResource|JsonResponse {
+        try {
+            $record = $blockchainRecordService->retryFailedRecord($blockchainRecord);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+                'data' => null,
+            ], 422);
+        }
+
+        return new BlockchainRecordResource($record);
     }
 }
