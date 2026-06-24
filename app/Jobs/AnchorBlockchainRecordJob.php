@@ -191,7 +191,19 @@ class AnchorBlockchainRecordJob implements ShouldQueue
         $receipt ??= $ethereumRpcClient->transactionReceipt($txHash);
 
         if ($receipt === null) {
-            throw new RuntimeException(BlockchainSubmittedRecordRefreshService::MSG_RECEIPT_PENDING);
+            $record->update([
+                'status' => 'submitted',
+                'tx_hash' => $txHash,
+                'submitted_at' => $record->submitted_at ?? now(),
+                'last_error' => $retryService->sanitizeError(
+                    BlockchainSubmittedRecordRefreshService::MSG_RECEIPT_PENDING
+                ),
+            ]);
+
+            $refreshService?->scheduleRefresh($record->fresh(), 1);
+            $this->markAnchorJobSuccess($blockchainJob);
+
+            return;
         }
 
         if (! $ethereumRpcClient->receiptIndicatesSuccess($receipt)) {

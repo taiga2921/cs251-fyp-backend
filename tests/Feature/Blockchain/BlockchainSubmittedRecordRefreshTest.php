@@ -260,6 +260,149 @@ class BlockchainSubmittedRecordRefreshTest extends TestCase
         Http::assertNotSent(fn ($request) => str_contains($request->body(), 'eth_sendTransaction'));
     }
 
+    public function test_queued_record_with_existing_tx_hash_refreshes_without_resubmitting(): void
+    {
+        config(['blockchain.confirmation_blocks' => 1]);
+
+        $this->fakeRefreshRpc(
+            receiptBlockNumber: 100,
+            latestBlockNumber: 100,
+            includeReceipt: true,
+            includeTransaction: true,
+        );
+
+        $record = BlockchainRecord::factory()->queued()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'chain_id' => 1337,
+            'network' => 'ganache',
+            'environment' => 'local',
+            'tx_hash' => $this->txHash,
+            'submitted_at' => now(),
+            'block_number' => null,
+            'confirmations' => 0,
+        ]);
+
+        (new AnchorBlockchainRecordJob($record->id))
+            ->handle(
+                app(EthereumRpcClient::class),
+                app(\App\Services\Blockchain\BlockchainRetryService::class),
+                app(BlockchainSubmittedRecordRefreshService::class),
+            );
+
+        $record->refresh();
+
+        $this->assertSame('confirmed', $record->status);
+        $this->assertNotNull($record->confirmed_at);
+        $this->assertSame(100, $record->block_number);
+        $this->assertSame(1, $record->confirmations);
+        $this->assertNull($record->last_error);
+
+        Http::assertSent(fn ($request) => str_contains($request->body(), 'eth_getTransactionReceipt'));
+        Http::assertSent(fn ($request) => str_contains($request->body(), 'eth_blockNumber'));
+        Http::assertNotSent(fn ($request) => str_contains($request->body(), 'eth_sendTransaction'));
+        Http::assertNotSent(fn ($request) => str_contains($request->body(), 'eth_sendRawTransaction'));
+    }
+
+    public function test_anchor_job_keeps_record_submitted_and_schedules_refresh_when_receipt_is_missing_after_store_hash(): void
+    {
+        Queue::fake();
+
+        config([
+            'blockchain.network' => 'sepolia',
+            'blockchain.mode' => 'testnet',
+            'blockchain.environment' => 'staging',
+            'blockchain.chain_id' => 11155111,
+            'blockchain.private_key' => '0x'.str_repeat('c', 64),
+        ]);
+
+        $this->fakeSepoliaAnchorRpcWithMissingReceipt();
+
+        $record = BlockchainRecord::factory()->pending()->create([
+            'record_hash' => str_repeat('a', 64),
+            'contract_address' => '0x'.str_repeat('a', 40),
+            'chain_id' => 11155111,
+            'network' => 'sepolia',
+            'environment' => 'staging',
+            'tx_hash' => null,
+            'retry_count' => 0,
+        ]);
+
+        (new AnchorBlockchainRecordJob($record->id))
+            ->handle(
+                app(EthereumRpcClient::class),
+                app(\App\Services\Blockchain\BlockchainRetryService::class),
+                app(BlockchainSubmittedRecordRefreshService::class),
+            );
+
+        $record->refresh();
+
+        $this->assertSame('submitted', $record->status);
+        $this->assertSame($this->txHash, $record->tx_hash);
+        $this->assertNotNull($record->submitted_at);
+        $this->assertNull($record->confirmed_at);
+        $this->assertNull($record->block_number);
+        $this->assertSame(0, $record->confirmations);
+        $this->assertSame(0, $record->retry_count);
+        $this->assertStringContainsString(
+            'receipt is not yet available',
+            strtolower((string) $record->last_error)
+        );
+        $this->assertStringNotContainsString(
+            (string) config('blockchain.private_key'),
+            (string) $record->last_error
+        );
+
+        $this->assertDatabaseHas('blockchain_jobs', [
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'anchor',
+            'status' => 'success',
+        ]);
+        $this->assertDatabaseHas('blockchain_jobs', [
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'refresh_confirmation',
+            'status' => 'queued',
+        ]);
+        $this->assertDatabaseMissing('blockchain_jobs', [
+            'blockchain_record_id' => $record->id,
+            'job_type' => 'retry_anchor',
+        ]);
+
+        $refreshJob = BlockchainJob::query()
+            ->where('blockchain_record_id', $record->id)
+            ->where('job_type', 'refresh_confirmation')
+            ->first();
+        $this->assertNotNull($refreshJob);
+        $this->assertNotNull($refreshJob->next_attempt_at);
+
+        Queue::assertPushed(
+            RefreshSubmittedBlockchainRecordJob::class,
+            fn (RefreshSubmittedBlockchainRecordJob $job): bool => $job->blockchainRecordId === $record->id
+        );
+
+        $sendRawCount = 0;
+        $receiptCallCount = 0;
+
+        Http::assertSent(function ($request) use (&$sendRawCount, &$receiptCallCount): bool {
+            $body = json_decode($request->body(), true);
+            $method = $body['method'] ?? null;
+
+            if ($method === 'eth_sendRawTransaction') {
+                $sendRawCount++;
+            }
+
+            if ($method === 'eth_getTransactionReceipt') {
+                $receiptCallCount++;
+            }
+
+            return true;
+        });
+
+        $this->assertSame(1, $sendRawCount);
+        $this->assertSame(1, $receiptCallCount);
+        Http::assertNotSent(fn ($request) => str_contains($request->body(), 'eth_sendTransaction'));
+    }
+
     private function createSubmittedRecord(
         ?int $blockNumber = null,
         int $confirmations = 0,
@@ -331,6 +474,27 @@ class BlockchainSubmittedRecordRefreshTest extends TestCase
                     'id' => 1,
                     'result' => '0x'.dechex($latestBlockNumber),
                 ]),
+                default => Http::response([
+                    'jsonrpc' => '2.0',
+                    'id' => 1,
+                    'error' => ['code' => -32601, 'message' => 'Unhandled RPC method in test: '.($body['method'] ?? 'unknown')],
+                ], 500),
+            };
+        });
+    }
+
+    private function fakeSepoliaAnchorRpcWithMissingReceipt(): void
+    {
+        Http::fake(function ($request) {
+            $body = json_decode($request->body(), true);
+
+            return match ($body['method'] ?? null) {
+                'eth_chainId' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0xaa36a7']),
+                'eth_getTransactionCount' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x0']),
+                'eth_gasPrice' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x3b9aca00']),
+                'eth_estimateGas' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => '0x5208']),
+                'eth_sendRawTransaction' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => $this->txHash]),
+                'eth_getTransactionReceipt' => Http::response(['jsonrpc' => '2.0', 'id' => 1, 'result' => null]),
                 default => Http::response([
                     'jsonrpc' => '2.0',
                     'id' => 1,

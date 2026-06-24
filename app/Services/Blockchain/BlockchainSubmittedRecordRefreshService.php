@@ -41,10 +41,10 @@ class BlockchainSubmittedRecordRefreshService
         }
 
         if ($submittedStatusOnly) {
-            if (! $record->isSubmitted()) {
+            if ($record->status !== 'submitted') {
                 return false;
             }
-        } elseif (! in_array($record->status, ['submitted', 'processing', 'failed'], true)) {
+        } elseif (! in_array($record->status, ['queued', 'submitted', 'processing', 'failed'], true)) {
             return false;
         }
 
