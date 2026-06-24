@@ -10,6 +10,7 @@ use App\Services\Anpr\AnprImageFileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -154,7 +155,7 @@ class AnprImageController extends Controller
 
             $validated = $validator->validated();
             $imageType = (string) $validated['image_type'];
-            /** @var \Illuminate\Http\UploadedFile $uploadedFile */
+            /** @var UploadedFile $uploadedFile */
             $uploadedFile = $validated['image'];
 
             $existing = AnprImage::query()

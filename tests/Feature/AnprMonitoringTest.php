@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AnprEvent;
 use App\Models\AnprImage;
 use App\Models\Camera;
+use App\Services\Anpr\AnprImageFileService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -395,7 +396,7 @@ class AnprMonitoringTest extends TestCase
 
     public function test_anpr_image_file_service_rejects_path_traversal_on_delete(): void
     {
-        $service = app(\App\Services\Anpr\AnprImageFileService::class);
+        $service = app(AnprImageFileService::class);
 
         $this->assertFalse($service->deleteIfWithinAllowedRoots('../outside-root/evidence.jpg'));
         $this->assertNull($service->resolveAbsolutePath('../outside-root/evidence.jpg'));

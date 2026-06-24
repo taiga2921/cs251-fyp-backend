@@ -13,8 +13,8 @@ use Tests\TestCase;
 
 class PatrolRouteTest extends TestCase
 {
-    use RefreshDatabase;
     use CreatesPatrolUsers;
+    use RefreshDatabase;
 
     protected function setUp(): void
     {
