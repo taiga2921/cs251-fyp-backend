@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
 use App\Services\Blockchain\BlockchainRetryService;
+use App\Services\Blockchain\BlockchainSubmittedRecordRefreshService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -32,6 +33,7 @@ class AnchorBlockchainRecordJob implements ShouldQueue
     public function handle(
         EthereumRpcClient $ethereumRpcClient,
         BlockchainRetryService $retryService,
+        BlockchainSubmittedRecordRefreshService $refreshService,
     ): void {
         $record = BlockchainRecord::query()->find($this->blockchainRecordId);
 
@@ -72,14 +74,15 @@ class AnchorBlockchainRecordJob implements ShouldQueue
             $blockchainJob = $this->createJobRow($record, $attemptNumber, $retryService);
         }
 
-        $record->markAsProcessing();
-
         try {
             if (is_string($record->tx_hash) && $record->tx_hash !== '') {
-                $this->confirmFromExistingTransaction($record, $ethereumRpcClient, $blockchainJob);
+                $refreshService->refreshSubmittedRecord($record, submittedStatusOnly: false);
+                $this->markAnchorJobSuccess($blockchainJob);
 
                 return;
             }
+
+            $record->markAsProcessing();
 
             $txHash = $ethereumRpcClient->storeHash(
                 $record->record_hash,
@@ -88,7 +91,7 @@ class AnchorBlockchainRecordJob implements ShouldQueue
 
             $record->markAsSubmitted($txHash);
 
-            $this->confirmFromReceipt($record, $ethereumRpcClient, $blockchainJob, $txHash);
+            $this->confirmFromReceipt($record, $ethereumRpcClient, $retryService, $blockchainJob, $txHash, null, $refreshService);
         } catch (Throwable $exception) {
             $this->handleFailure($record, $blockchainJob, $exception, $retryService, $attemptNumber);
         }
@@ -172,25 +175,6 @@ class AnchorBlockchainRecordJob implements ShouldQueue
     }
 
     /**
-     * @throws RuntimeException
-     */
-    private function confirmFromExistingTransaction(
-        BlockchainRecord $record,
-        EthereumRpcClient $ethereumRpcClient,
-        BlockchainJob $blockchainJob,
-    ): void {
-        $txHash = (string) $record->tx_hash;
-
-        $receipt = $ethereumRpcClient->transactionReceipt($txHash);
-
-        if ($receipt === null) {
-            throw new RuntimeException('Transaction receipt is not yet available.');
-        }
-
-        $this->confirmFromReceipt($record, $ethereumRpcClient, $blockchainJob, $txHash, $receipt);
-    }
-
-    /**
      * @param  array<string, mixed>|null  $receipt
      *
      * @throws RuntimeException
@@ -198,23 +182,25 @@ class AnchorBlockchainRecordJob implements ShouldQueue
     private function confirmFromReceipt(
         BlockchainRecord $record,
         EthereumRpcClient $ethereumRpcClient,
+        BlockchainRetryService $retryService,
         BlockchainJob $blockchainJob,
         string $txHash,
         ?array $receipt = null,
+        ?BlockchainSubmittedRecordRefreshService $refreshService = null,
     ): void {
         $receipt ??= $ethereumRpcClient->transactionReceipt($txHash);
 
         if ($receipt === null) {
-            throw new RuntimeException('Transaction receipt is not yet available.');
+            throw new RuntimeException(BlockchainSubmittedRecordRefreshService::MSG_RECEIPT_PENDING);
         }
 
-        if (! $this->receiptIndicatesSuccess($receipt)) {
-            throw new RuntimeException('Ethereum transaction receipt indicates failure.');
+        if (! $ethereumRpcClient->receiptIndicatesSuccess($receipt)) {
+            throw new RuntimeException(BlockchainSubmittedRecordRefreshService::MSG_RECEIPT_FAILED);
         }
 
         $blockNumber = $ethereumRpcClient->hexQuantityToInt((string) $receipt['blockNumber']);
         $confirmations = $ethereumRpcClient->confirmationsForReceipt($receipt);
-        $requiredConfirmations = max(1, (int) config('blockchain.confirmation_blocks', 1));
+        $requiredConfirmations = $ethereumRpcClient->requiredConfirmationBlocks();
 
         if ($confirmations >= $requiredConfirmations) {
             $record->markAsConfirmed($txHash, $blockNumber, $confirmations);
@@ -225,10 +211,19 @@ class AnchorBlockchainRecordJob implements ShouldQueue
                 'confirmations' => $confirmations,
                 'status' => 'submitted',
                 'submitted_at' => $record->submitted_at ?? now(),
-                'last_error' => null,
+                'last_error' => $retryService->sanitizeError(
+                    BlockchainSubmittedRecordRefreshService::MSG_INSUFFICIENT_CONFIRMATIONS
+                ),
             ]);
+
+            $refreshService?->scheduleRefresh($record->fresh(), 1);
         }
 
+        $this->markAnchorJobSuccess($blockchainJob);
+    }
+
+    private function markAnchorJobSuccess(BlockchainJob $blockchainJob): void
+    {
         $blockchainJob->update([
             'status' => 'success',
             'finished_at' => now(),
@@ -286,27 +281,5 @@ class AnchorBlockchainRecordJob implements ShouldQueue
             isRetryAttempt: true,
             expectedBlockchainJobId: $queuedRetryJob->id,
         )->delay($nextAttemptAt);
-    }
-
-    /**
-     * @param  array<string, mixed>  $receipt
-     */
-    private function receiptIndicatesSuccess(array $receipt): bool
-    {
-        $status = $receipt['status'] ?? null;
-
-        if ($status === null) {
-            return true;
-        }
-
-        if (is_int($status)) {
-            return $status === 1;
-        }
-
-        if (! is_string($status)) {
-            return false;
-        }
-
-        return in_array(strtolower($status), ['0x1', '0x01', '1'], true);
     }
 }

@@ -36,6 +36,8 @@ Route::middleware('auth:api')->group(function (): void {
     Route::apiResource('blockchain-records', BlockchainRecordController::class)->only(['index', 'show']);
     Route::post('blockchain-records/{blockchain_record}/verify', [BlockchainRecordController::class, 'verify'])
         ->name('blockchain-records.verify');
+    Route::post('blockchain-records/{blockchain_record}/refresh', [BlockchainRecordController::class, 'refresh'])
+        ->name('blockchain-records.refresh');
 
     Route::middleware('admin')->group(function (): void {
         Route::post('blockchain-records/{blockchain_record}/retry', [BlockchainRecordController::class, 'retry'])

@@ -821,6 +821,10 @@ class BlockchainRetryTest extends TestCase
         ?string $expectedBlockchainJobId = null,
     ): void {
         (new AnchorBlockchainRecordJob($record->id, $isRetryAttempt, $expectedBlockchainJobId))
-            ->handle(app(EthereumRpcClient::class), app(\App\Services\Blockchain\BlockchainRetryService::class));
+            ->handle(
+                app(EthereumRpcClient::class),
+                app(\App\Services\Blockchain\BlockchainRetryService::class),
+                app(\App\Services\Blockchain\BlockchainSubmittedRecordRefreshService::class),
+            );
     }
 }

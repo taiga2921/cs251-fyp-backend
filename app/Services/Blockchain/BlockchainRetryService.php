@@ -169,4 +169,23 @@ class BlockchainRetryService
             'next_attempt_at' => null,
         ]);
     }
+
+    public function cancelQueuedRefreshJobs(string $blockchainRecordId, ?string $exceptJobId = null): int
+    {
+        $query = BlockchainJob::query()
+            ->where('blockchain_record_id', $blockchainRecordId)
+            ->where('job_type', 'refresh_confirmation')
+            ->where('status', 'queued');
+
+        if ($exceptJobId !== null) {
+            $query->where('id', '!=', $exceptJobId);
+        }
+
+        return $query->update([
+            'status' => 'cancelled',
+            'finished_at' => now(),
+            'last_error' => $this->sanitizeError(self::STALE_RETRY_REASON),
+            'next_attempt_at' => null,
+        ]);
+    }
 }

@@ -162,6 +162,7 @@ class BlockchainAnchoringTest extends TestCase
             ->handle(
                 app(EthereumRpcClient::class),
                 app(\App\Services\Blockchain\BlockchainRetryService::class),
+                app(\App\Services\Blockchain\BlockchainSubmittedRecordRefreshService::class),
             );
     }
 

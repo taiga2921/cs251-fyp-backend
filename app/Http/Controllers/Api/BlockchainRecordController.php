@@ -8,6 +8,7 @@ use App\Http\Resources\BlockchainRecordResource;
 use App\Http\Resources\BlockchainVerificationResource;
 use App\Models\BlockchainRecord;
 use App\Services\Blockchain\BlockchainRecordService;
+use App\Services\Blockchain\BlockchainSubmittedRecordRefreshService;
 use App\Services\Blockchain\BlockchainVerificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -101,6 +102,31 @@ class BlockchainRecordController extends Controller
         }
 
         return new BlockchainRecordResource($record);
+    }
+
+    public function refresh(
+        BlockchainRecord $blockchainRecord,
+        BlockchainSubmittedRecordRefreshService $refreshService,
+    ): BlockchainRecordResource|JsonResponse {
+        $this->authorizePatrolMonitoring();
+
+        if (! $refreshService->isEligibleForRefresh($blockchainRecord)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only submitted blockchain records with an existing transaction hash can be refreshed.',
+                'data' => null,
+            ], 422);
+        }
+
+        $refreshService->refreshSubmittedRecord($blockchainRecord);
+
+        $blockchainRecord->refresh()->load([
+            'jobs' => fn ($query) => $query->latest('created_at'),
+            'verifications' => fn ($query) => $query->latest('verified_at'),
+            'verifications.verifiedBy',
+        ]);
+
+        return new BlockchainRecordResource($blockchainRecord);
     }
 
     public function verify(

@@ -121,6 +121,24 @@ class EthereumRpcClient
     /**
      * @return array<string, mixed>|null
      */
+    public function transactionByHash(string $txHash): ?array
+    {
+        $result = $this->rpc('eth_getTransactionByHash', [$txHash]);
+
+        if ($result === null) {
+            return null;
+        }
+
+        if (! is_array($result)) {
+            throw new RuntimeException('Ethereum RPC eth_getTransactionByHash returned an invalid response.');
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
     public function transactionReceipt(string $txHash): ?array
     {
         $result = $this->rpc('eth_getTransactionReceipt', [$txHash]);
@@ -151,6 +169,33 @@ class EthereumRpcClient
         $latestBlock = $this->blockNumber();
 
         return max(0, $latestBlock - $receiptBlock + 1);
+    }
+
+    public function requiredConfirmationBlocks(): int
+    {
+        return max(1, (int) config('blockchain.confirmation_blocks', 1));
+    }
+
+    /**
+     * @param  array<string, mixed>  $receipt
+     */
+    public function receiptIndicatesSuccess(array $receipt): bool
+    {
+        $status = $receipt['status'] ?? null;
+
+        if ($status === null) {
+            return true;
+        }
+
+        if (is_int($status)) {
+            return $status === 1;
+        }
+
+        if (! is_string($status)) {
+            return false;
+        }
+
+        return in_array(strtolower($status), ['0x1', '0x01', '1'], true);
     }
 
     public function encodeStoreHashCallData(string $recordHash): string
