@@ -46,7 +46,7 @@ class AnchorBlockchainRecordJob implements ShouldQueue
                 if ($queuedJob !== null && $queuedJob->status === 'queued') {
                     $retryService->markRetryJobCancelled(
                         $queuedJob,
-                        'Skipped stale retry job; record already confirmed.'
+                        BlockchainRetryService::ACTIVE_RECORD_RETRY_REASON,
                     );
                 }
             }

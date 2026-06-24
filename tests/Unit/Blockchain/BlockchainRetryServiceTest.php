@@ -136,4 +136,45 @@ class BlockchainRetryServiceTest extends TestCase
 
         $this->assertNull($this->service->staleRetryReason($record, $currentJob));
     }
+
+    #[DataProvider('activeRecordStatusProvider')]
+    public function test_stale_retry_reason_detects_active_record_statuses(string $factoryState): void
+    {
+        $record = match ($factoryState) {
+            'processing' => BlockchainRecord::factory()->create([
+                'status' => 'processing',
+                'retry_count' => 1,
+            ]),
+            'submitted' => BlockchainRecord::factory()->submitted()->create([
+                'retry_count' => 1,
+            ]),
+            'confirmed' => BlockchainRecord::factory()->confirmed()->create([
+                'retry_count' => 1,
+            ]),
+            default => throw new \InvalidArgumentException("Unsupported factory state: {$factoryState}"),
+        };
+
+        $queuedJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 2,
+        ]);
+
+        $this->assertSame(
+            BlockchainRetryService::ACTIVE_RECORD_RETRY_REASON,
+            $this->service->staleRetryReason($record, $queuedJob)
+        );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function activeRecordStatusProvider(): array
+    {
+        return [
+            'processing' => ['processing'],
+            'submitted' => ['submitted'],
+            'confirmed' => ['confirmed'],
+        ];
+    }
 }

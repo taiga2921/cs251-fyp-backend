@@ -11,6 +11,8 @@ class BlockchainRetryService
 {
     public const STALE_RETRY_REASON = 'Skipped stale retry job; retry state has changed.';
 
+    public const ACTIVE_RECORD_RETRY_REASON = 'Skipped stale retry job; record is already active.';
+
     public function maxAttempts(): int
     {
         $configured = config('blockchain.max_retries', 5);
@@ -89,8 +91,8 @@ class BlockchainRetryService
             return self::STALE_RETRY_REASON;
         }
 
-        if ($record->isConfirmed()) {
-            return 'Skipped stale retry job; record already confirmed.';
+        if ($record->isProcessing() || $record->isSubmitted() || $record->isConfirmed()) {
+            return self::ACTIVE_RECORD_RETRY_REASON;
         }
 
         $hasNewerQueuedRetry = BlockchainJob::query()

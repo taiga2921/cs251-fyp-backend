@@ -5,12 +5,14 @@ namespace Tests\Feature\Blockchain;
 use App\Jobs\AnchorBlockchainRecordJob;
 use App\Models\BlockchainJob;
 use App\Models\BlockchainRecord;
+use App\Services\Blockchain\BlockchainRetryService;
 use App\Services\Blockchain\EthereumRpcClient;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\CreatesPatrolUsers;
 use Tests\TestCase;
 
@@ -394,6 +396,74 @@ class BlockchainRetryTest extends TestCase
                 ->where('status', 'processing')
                 ->count()
         );
+    }
+
+    #[DataProvider('activeRecordStatusProvider')]
+    public function test_retry_job_is_cancelled_without_rpc_when_record_is_active(string $recordState): void
+    {
+        Http::fake(function (): never {
+            $this->fail('Stale retry job should not call JSON-RPC.');
+        });
+
+        $record = match ($recordState) {
+            'processing' => BlockchainRecord::factory()->create([
+                'record_hash' => str_repeat('a', 64),
+                'contract_address' => '0x'.str_repeat('a', 40),
+                'status' => 'processing',
+                'retry_count' => 2,
+            ]),
+            'submitted' => BlockchainRecord::factory()->submitted()->create([
+                'record_hash' => str_repeat('a', 64),
+                'contract_address' => '0x'.str_repeat('a', 40),
+                'retry_count' => 2,
+            ]),
+            'confirmed' => BlockchainRecord::factory()->confirmed()->create([
+                'record_hash' => str_repeat('a', 64),
+                'contract_address' => '0x'.str_repeat('a', 40),
+                'retry_count' => 2,
+            ]),
+            default => throw new \InvalidArgumentException("Unsupported record state: {$recordState}"),
+        };
+
+        $queuedJob = BlockchainJob::factory()->for($record)->create([
+            'job_type' => 'retry_anchor',
+            'status' => 'queued',
+            'attempts' => 3,
+            'max_attempts' => 5,
+            'next_attempt_at' => now()->addSeconds(10),
+        ]);
+
+        $this->runAnchorJob($record, isRetryAttempt: true, expectedBlockchainJobId: $queuedJob->id);
+
+        $queuedJob->refresh();
+        $record->refresh();
+
+        $this->assertSame('cancelled', $queuedJob->status);
+        $this->assertNotNull($queuedJob->finished_at);
+        $this->assertStringContainsString(
+            'record is already active',
+            (string) $queuedJob->last_error
+        );
+        $this->assertSame(2, $record->retry_count);
+        $this->assertSame(
+            0,
+            BlockchainJob::query()
+                ->where('blockchain_record_id', $record->id)
+                ->where('status', 'processing')
+                ->count()
+        );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function activeRecordStatusProvider(): array
+    {
+        return [
+            'processing' => ['processing'],
+            'submitted' => ['submitted'],
+            'confirmed' => ['confirmed'],
+        ];
     }
 
     public function test_manual_retry_cancels_superseded_queued_retry_jobs(): void
