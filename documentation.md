@@ -153,7 +153,7 @@ The Laravel backend remains the **source of truth** for operational data and blo
 | Config | `config/blockchain.php`, `.env` `BLOCKCHAIN_*` | M3 complete; disabled by default; validate with `php artisan blockchain:check-config` |
 | Queue jobs | `app/Jobs/AnchorBlockchainRecordJob.php` | M6 Ganache anchoring when `BLOCKCHAIN_ENABLED=true` |
 | Future verification & dashboard APIs | `app/Http/Controllers/Api/`, `app/Http/Resources/` | `BlockchainRecordController` read-only today |
-| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | **83** blockchain tests total (M2–M6) |
+| Automated tests | `tests/Feature/Blockchain/`, `tests/Unit/Blockchain/` | **85** blockchain tests total (M2–M6) |
 
 **Rules:**
 
