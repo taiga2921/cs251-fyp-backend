@@ -522,29 +522,57 @@ Unable to determine from current implementation — **no** `belongsToMany` migra
 
 ### ERD-style overview
 
+Derived from `database/migrations/` (including `2026_05_19_120000_add_manual_to_checkpoint_events_detection_type.php`). The Laravel queue table `jobs` is omitted — it is infrastructure, not domain data.
+
 ```mermaid
 erDiagram
   roles ||--o{ users : "role_id"
   users ||--o{ zones : "created_by"
-  users {
-    uuid id PK
-    uuid role_id FK
-    string email
-    string password
-  }
+  users ||--o{ patrol_sessions : "user_id"
+  users ||--o{ location_logs : "user_id"
+  users ||--o{ push_subscriptions : "user_id"
+  users ||--o{ blockchain_verifications : "verified_by"
+
+  zones ||--o{ checkpoints : "zone_id"
+  zones ||--o{ patrol_sessions : "zone_id"
+
+  blockchain_records ||--o{ patrol_sessions : "blockchain_record_id"
+  blockchain_records ||--o{ anpr_events : "blockchain_record_id"
+  blockchain_records ||--o{ blockchain_jobs : "blockchain_record_id"
+  blockchain_records ||--o{ blockchain_verifications : "blockchain_record_id"
+
+  patrol_sessions ||--o{ patrol_routes : "patrol_session_id"
+  patrol_sessions ||--o{ location_logs : "patrol_session_id"
+  patrol_sessions ||--o{ checkpoint_events : "patrol_session_id"
+
+  checkpoints ||--o{ checkpoint_events : "checkpoint_id"
+  checkpoint_events ||--o| checkpoint_event_metrics : "checkpoint_event_id"
+
+  cameras ||--o{ anpr_events : "camera_id"
+  vehicles ||--o{ anpr_events : "vehicle_id"
+  anpr_events ||--o{ anpr_images : "anpr_event_id"
+  anpr_events ||--o{ anpr_event_logs : "anpr_event_id"
+
   roles {
     uuid id PK
     string name UK
+    text description
+  }
+  users {
+    uuid id PK
+    uuid role_id FK
+    string name
+    string email UK
+    string password
+    boolean two_factor_enabled
+    timestamp deleted_at
   }
   zones {
     uuid id PK
     string name UK
+    text description
     uuid created_by FK
   }
-  users ||--o{ patrol_sessions : "user_id"
-  zones ||--o{ patrol_sessions : "zone_id"
-  blockchain_records ||--o{ patrol_sessions : "blockchain_record_id"
-  zones ||--o{ checkpoints : "zone_id"
   checkpoints {
     uuid id PK
     uuid zone_id FK
@@ -555,13 +583,6 @@ erDiagram
     enum location_type
     boolean is_active
   }
-  blockchain_records {
-    uuid id PK
-    string entity_type
-    uuid entity_id
-    string hash
-    string network
-  }
   patrol_sessions {
     uuid id PK
     uuid user_id FK
@@ -571,22 +592,31 @@ erDiagram
     timestamp ended_at
     enum status
   }
-  patrol_sessions ||--o{ location_logs : "patrol_session_id"
-  users ||--o{ location_logs : "user_id"
+  patrol_routes {
+    uuid id PK
+    uuid patrol_session_id FK
+    decimal latitude
+    decimal longitude
+    float accuracy
+    float altitude
+    timestamp recorded_at
+    timestamp created_at
+  }
   location_logs {
     uuid id PK
     uuid patrol_session_id FK
     uuid user_id FK
     decimal latitude
     decimal longitude
+    float accuracy
     bigint timestamp
+    timestamp server_received_at
     enum source
     enum tracking_state
+    float speed
+    float heading
     timestamp created_at
   }
-  patrol_sessions ||--o{ checkpoint_events : "patrol_session_id"
-  checkpoints ||--o{ checkpoint_events : "checkpoint_id"
-  checkpoint_events ||--o| checkpoint_event_metrics : "checkpoint_event_id"
   checkpoint_events {
     uuid id PK
     uuid patrol_session_id FK
@@ -610,16 +640,20 @@ erDiagram
     decimal integrity_factor
     timestamp created_at
   }
-  cameras ||--o{ anpr_events : "camera_id"
-  vehicles ||--o{ anpr_events : "vehicle_id"
-  blockchain_records ||--o{ anpr_events : "blockchain_record_id"
-  anpr_events ||--o{ anpr_images : "anpr_event_id"
-  anpr_events ||--o{ anpr_event_logs : "anpr_event_id"
+  push_subscriptions {
+    uuid id PK
+    uuid user_id FK
+    string endpoint UK
+    json keys
+    text user_agent
+    timestamp last_used_at
+  }
   cameras {
     uuid id PK
     string name
+    string location
+    text rtsp_url
     string ip_address
-    string status
     boolean is_active
     timestamp last_seen_at
   }
@@ -627,8 +661,10 @@ erDiagram
     uuid id PK
     string plate_number UK
     string owner_name
+    string vehicle_type
     enum status
     enum source
+    text notes
   }
   anpr_events {
     uuid id PK
@@ -640,6 +676,8 @@ erDiagram
     timestamp detection_time
     boolean is_flagged
     boolean is_valid
+    decimal latitude
+    decimal longitude
   }
   anpr_images {
     uuid id PK
@@ -655,8 +693,43 @@ erDiagram
     uuid anpr_event_id FK
     string stage
     text message
-    timestamp created_at
-    timestamp updated_at
+  }
+  blockchain_records {
+    uuid id PK
+    string entity_type
+    string entity_id
+    string proof_type
+    string canonical_version
+    char record_hash
+    json payload_summary
+    enum network
+    enum environment
+    string tx_hash
+    bigint block_number
+    enum status
+    unsigned retry_count
+  }
+  blockchain_jobs {
+    uuid id PK
+    uuid blockchain_record_id FK
+    enum job_type
+    enum status
+    unsigned attempts
+    unsigned max_attempts
+    timestamp next_attempt_at
+    text last_error
+  }
+  blockchain_verifications {
+    uuid id PK
+    uuid blockchain_record_id FK
+    uuid verified_by FK
+    enum verification_type
+    char stored_hash
+    char recomputed_hash
+    char onchain_hash
+    boolean onchain_found
+    enum result
+    timestamp verified_at
   }
 ```
 
