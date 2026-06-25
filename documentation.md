@@ -1332,39 +1332,6 @@ Composer also defines `composer run setup` to chain install, env, key, migrate, 
 - Targeted patrol session seed: `php artisan db:seed --class=PatrolSessionSeeder`
 - Targeted checkpoint event seed: `php artisan db:seed --class=CheckpointEventSeeder`
 
-#### Production upgrade: legacy `blockchain_records` schema
-
-Production databases created from the early prototype schema may lack M2+ columns such as `proof_type`, `record_hash`, and `last_error`. Migration `2026_06_25_120000_upgrade_legacy_blockchain_records_schema.php` upgrades existing rows in place (no `migrate:fresh`, no data wipe).
-
-Safe production sequence:
-
-```bash
-cd /var/www/backend/cs251-fyp-backend
-php artisan down
-php artisan config:clear
-php artisan migrate --force
-php artisan queue:restart
-php artisan up
-php artisan blockchain:check-config
-```
-
-Verify schema:
-
-```sql
-DESCRIBE blockchain_records;
-```
-
-Expected columns include: `proof_type`, `record_hash`, `canonical_version`, `hash_algorithm`, `payload_summary`, `chain_id`, `contract_address`, `confirmations`, `last_error`.
-
-After migration:
-
-1. Restart the queue worker (`php artisan queue:restart` or `sudo systemctl restart laravel-queue`).
-2. Retry any failed AI ANPR evidence upload jobs.
-3. Confirm `/anpr-events/{id}/images/upload` no longer fails on `blockchain_records.proof_type`.
-4. Confirm ANPR image responses load `blockchain_proof` when blockchain is enabled.
-
-Legacy rows receive safe defaults: `proof_type=legacy`, `canonical_version=v1`, `hash_algorithm=sha256`, `confirmations=0`, `environment=development` normalized to `local`, and `record_hash` / `last_error` copied from old `hash` / `error_message` when present.
-
 ### Production notes
 
 - Set `APP_DEBUG=false`, strong `APP_KEY`, secure `JWT_SECRET`.
