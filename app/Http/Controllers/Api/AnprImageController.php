@@ -164,6 +164,10 @@ class AnprImageController extends Controller
             /** @var UploadedFile $uploadedFile */
             $uploadedFile = $validated['image'];
 
+            if (AnprImage::hasProofedRowForEventAndType((string) $anprEvent->id, $imageType)) {
+                return $this->immutableEvidenceConflictResponse();
+            }
+
             $existing = AnprImage::query()
                 ->where('anpr_event_id', $anprEvent->id)
                 ->where('image_type', $imageType)
@@ -225,7 +229,14 @@ class AnprImageController extends Controller
                 ], 422);
             }
 
-            $anprImage->update($validator->validated());
+            $validated = $validator->validated();
+
+            if ($anprImage->hasBlockchainEvidenceProof()
+                && $anprImage->wouldChangeBlockchainCanonicalFields($validated)) {
+                return $this->immutableEvidenceConflictResponse();
+            }
+
+            $anprImage->update($validated);
             $this->loadImageResponseRelations($anprImage);
 
             return response()->json([
@@ -241,6 +252,10 @@ class AnprImageController extends Controller
     public function destroy(AnprImage $anprImage): JsonResponse|Response
     {
         try {
+            if ($anprImage->hasBlockchainEvidenceProof()) {
+                return $this->immutableEvidenceConflictResponse();
+            }
+
             $anprImage->delete();
 
             return response()->noContent();
@@ -252,6 +267,15 @@ class AnprImageController extends Controller
     protected function loadImageResponseRelations(AnprImage $anprImage): AnprImage
     {
         return $anprImage->load(['anprEvent', 'blockchainRecord']);
+    }
+
+    protected function immutableEvidenceConflictResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'ANPR image evidence is immutable after blockchain proof creation.',
+            'data' => null,
+        ], 409);
     }
 
     protected function errorResponse(Throwable $e): JsonResponse

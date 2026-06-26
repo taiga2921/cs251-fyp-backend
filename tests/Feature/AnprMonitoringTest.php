@@ -28,7 +28,10 @@ class AnprMonitoringTest extends TestCase
 
         $this->imageRoot = storage_path('framework/testing/anpr-images');
         File::ensureDirectoryExists($this->imageRoot);
-        config(['anpr.image_roots' => [$this->imageRoot]]);
+        config([
+            'anpr.image_roots' => [$this->imageRoot],
+            'blockchain.enabled' => false,
+        ]);
     }
 
     protected function tearDown(): void

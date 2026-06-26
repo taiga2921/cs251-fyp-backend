@@ -293,6 +293,14 @@ class AnprEventController extends Controller
     public function destroy(AnprEvent $anprEvent): JsonResponse|Response
     {
         try {
+            if ($anprEvent->hasBlockchainCreationProof()) {
+                return $this->immutableEventConflictResponse();
+            }
+
+            if ($anprEvent->hasProofedImages()) {
+                return $this->immutableEventEvidenceConflictResponse();
+            }
+
             $anprEvent->delete();
 
             return response()->noContent();
@@ -308,6 +316,24 @@ class AnprEventController extends Controller
         if ($anprEvent->relationLoaded('images')) {
             $anprEvent->load('images.blockchainRecord');
         }
+    }
+
+    protected function immutableEventConflictResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'ANPR event is immutable after blockchain proof creation.',
+            'data' => null,
+        ], 409);
+    }
+
+    protected function immutableEventEvidenceConflictResponse(): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'ANPR event cannot be deleted because it contains immutable blockchain-proofed evidence.',
+            'data' => null,
+        ], 409);
     }
 
     protected function errorResponse(Throwable $e): JsonResponse

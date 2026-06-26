@@ -357,4 +357,390 @@ class AnprBlockchainIntegrationTest extends TestCase
             ->assertJsonMissingPath('data.blockchain_proof.payload_summary')
             ->assertJsonMissingPath('data.blockchain_proof.record_hash');
     }
+
+    public function test_anpr_image_upload_replacement_blocked_after_blockchain_evidence_proof_exists(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => true]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $firstFile = UploadedFile::fake()->create('full-first.jpg', 200, 'image/jpeg');
+
+        $firstResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $firstFile,
+            ])
+            ->assertOk();
+
+        $imageId = $firstResponse->json('data.id');
+        $originalPath = $firstResponse->json('data.file_path');
+        $originalAbsolute = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, (string) $originalPath);
+
+        $this->assertDatabaseHas('blockchain_records', [
+            'entity_type' => 'anpr_image',
+            'entity_id' => $imageId,
+            'proof_type' => 'evidence_file',
+        ]);
+        $this->assertDatabaseCount('blockchain_records', 1);
+
+        $secondFile = UploadedFile::fake()->create('full-second.jpg', 300, 'image/jpeg');
+
+        $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $secondFile,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseCount('blockchain_records', 1);
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $imageId,
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => $originalPath,
+        ]);
+        $this->assertFileExists($originalAbsolute);
+    }
+
+    public function test_anpr_image_upload_replacement_allowed_before_blockchain_evidence_proof_exists(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => false]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $firstFile = UploadedFile::fake()->create('full-first.jpg', 200, 'image/jpeg');
+        $secondFile = UploadedFile::fake()->create('full-second.jpg', 200, 'image/jpeg');
+
+        $firstResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $firstFile,
+            ])
+            ->assertOk();
+
+        $firstId = $firstResponse->json('data.id');
+        $firstPath = $firstResponse->json('data.file_path');
+        $firstAbsolute = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, (string) $firstPath);
+
+        $secondResponse = $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $secondFile,
+            ])
+            ->assertOk();
+
+        $secondId = $secondResponse->json('data.id');
+        $secondPath = $secondResponse->json('data.file_path');
+
+        $this->assertSame($firstId, $secondId);
+        $this->assertNotSame($firstPath, $secondPath);
+        $this->assertDatabaseCount('anpr_images', 1);
+        $this->assertDatabaseCount('blockchain_records', 0);
+        $this->assertFileDoesNotExist($firstAbsolute);
+
+        $secondAbsolute = $this->imageRoot.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, (string) $secondPath);
+        $this->assertFileExists($secondAbsolute);
+    }
+
+    public function test_anpr_image_upload_replacement_blocked_when_proof_exists_even_if_blockchain_disabled(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => false]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $image = AnprImage::factory()->create([
+            'anpr_event_id' => $event->id,
+            'image_type' => 'plate',
+            'file_path' => 'events/'.$event->id.'/plate_existing.jpg',
+            'file_size' => 200,
+            'resolution' => '640x480',
+        ]);
+
+        $absoluteDirectory = $this->imageRoot.DIRECTORY_SEPARATOR.'events'.DIRECTORY_SEPARATOR.$event->id;
+        File::ensureDirectoryExists($absoluteDirectory);
+        File::put($absoluteDirectory.DIRECTORY_SEPARATOR.'plate_existing.jpg', 'existing-evidence');
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $replacementFile = UploadedFile::fake()->create('plate-replacement.jpg', 200, 'image/jpeg');
+
+        $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'plate',
+                'image' => $replacementFile,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $image->id,
+            'file_path' => 'events/'.$event->id.'/plate_existing.jpg',
+        ]);
+        $this->assertDatabaseCount('blockchain_records', 1);
+    }
+
+    public function test_anpr_image_update_blocks_canonical_field_changes_after_blockchain_evidence_proof_exists(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $image = AnprImage::factory()->create([
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => 'events/'.$event->id.'/full.jpg',
+            'file_size' => 1024,
+            'resolution' => '1280x720',
+        ]);
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'file_path' => 'events/'.$event->id.'/full-replaced.jpg',
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'file_size' => 2048,
+            ])
+            ->assertStatus(409);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'resolution' => '1920x1080',
+            ])
+            ->assertStatus(409);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'image_type' => 'plate',
+            ])
+            ->assertStatus(409);
+
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $image->id,
+            'file_path' => 'events/'.$event->id.'/full.jpg',
+            'file_size' => 1024,
+            'resolution' => '1280x720',
+            'image_type' => 'full',
+        ]);
+    }
+
+    public function test_anpr_image_update_allows_non_canonical_metadata_after_blockchain_evidence_proof_exists(): void
+    {
+        $admin = $this->adminUser();
+        $image = AnprImage::factory()->create([
+            'expires_at' => null,
+        ]);
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $expiresAt = now()->addDays(30)->toIso8601String();
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'expires_at' => $expiresAt,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertNotNull($image->fresh()->expires_at);
+    }
+
+    public function test_anpr_image_destroy_blocked_after_blockchain_evidence_proof_exists(): void
+    {
+        $admin = $this->adminUser();
+        $image = AnprImage::factory()->create();
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/anpr-images/'.$image->id)
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseHas('anpr_images', ['id' => $image->id]);
+    }
+
+    public function test_anpr_event_destroy_is_blocked_when_event_has_proofed_image(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+        $relativePath = 'events/'.$event->id.'/full.jpg';
+        $absoluteDirectory = $this->imageRoot.DIRECTORY_SEPARATOR.'events'.DIRECTORY_SEPARATOR.$event->id;
+        File::ensureDirectoryExists($absoluteDirectory);
+        File::put($absoluteDirectory.DIRECTORY_SEPARATOR.'full.jpg', 'proofed-evidence');
+
+        $image = AnprImage::factory()->create([
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => $relativePath,
+        ]);
+
+        $record = BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/anpr-events/'.$event->id)
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath(
+                'message',
+                'ANPR event cannot be deleted because it contains immutable blockchain-proofed evidence.',
+            );
+
+        $this->assertDatabaseHas('anpr_events', ['id' => $event->id]);
+        $this->assertDatabaseHas('anpr_images', ['id' => $image->id]);
+        $this->assertDatabaseHas('blockchain_records', ['id' => $record->id]);
+        $this->assertFileExists($absoluteDirectory.DIRECTORY_SEPARATOR.'full.jpg');
+    }
+
+    public function test_anpr_event_destroy_is_blocked_when_event_has_event_creation_proof(): void
+    {
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+
+        $record = BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_event',
+            'entity_id' => $event->id,
+            'proof_type' => 'entity_created',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/anpr-events/'.$event->id)
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'ANPR event is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseHas('anpr_events', ['id' => $event->id]);
+        $this->assertDatabaseHas('blockchain_records', ['id' => $record->id]);
+    }
+
+    public function test_upload_replacement_is_blocked_when_any_matching_image_type_row_has_proof(): void
+    {
+        Bus::fake();
+        config(['blockchain.enabled' => false]);
+
+        $admin = $this->adminUser();
+        $event = AnprEvent::factory()->create();
+
+        $unproofedImage = AnprImage::factory()->create([
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => 'events/'.$event->id.'/full-unproofed.jpg',
+            'file_size' => 100,
+        ]);
+
+        $proofedImage = AnprImage::factory()->create([
+            'anpr_event_id' => $event->id,
+            'image_type' => 'full',
+            'file_path' => 'events/'.$event->id.'/full-proofed.jpg',
+            'file_size' => 200,
+        ]);
+
+        $absoluteDirectory = $this->imageRoot.DIRECTORY_SEPARATOR.'events'.DIRECTORY_SEPARATOR.$event->id;
+        File::ensureDirectoryExists($absoluteDirectory);
+        File::put($absoluteDirectory.DIRECTORY_SEPARATOR.'full-unproofed.jpg', 'unproofed-bytes');
+        File::put($absoluteDirectory.DIRECTORY_SEPARATOR.'full-proofed.jpg', 'proofed-bytes');
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $proofedImage->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $replacementFile = UploadedFile::fake()->create('full-replacement.jpg', 300, 'image/jpeg');
+
+        $this->actingAs($admin, 'api')
+            ->post("/api/anpr-events/{$event->id}/images/upload", [
+                'image_type' => 'full',
+                'image' => $replacementFile,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseCount('blockchain_records', 1);
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $unproofedImage->id,
+            'file_path' => 'events/'.$event->id.'/full-unproofed.jpg',
+        ]);
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $proofedImage->id,
+            'file_path' => 'events/'.$event->id.'/full-proofed.jpg',
+        ]);
+        $this->assertFileExists($absoluteDirectory.DIRECTORY_SEPARATOR.'full-unproofed.jpg');
+        $this->assertFileExists($absoluteDirectory.DIRECTORY_SEPARATOR.'full-proofed.jpg');
+    }
+
+    public function test_anpr_event_id_update_is_blocked_after_image_proof_exists(): void
+    {
+        $admin = $this->adminUser();
+        $originalEvent = AnprEvent::factory()->create();
+        $otherEvent = AnprEvent::factory()->create();
+        $image = AnprImage::factory()->create([
+            'anpr_event_id' => $originalEvent->id,
+            'image_type' => 'full',
+            'file_path' => 'events/'.$originalEvent->id.'/full.jpg',
+        ]);
+
+        BlockchainRecord::factory()->create([
+            'entity_type' => 'anpr_image',
+            'entity_id' => $image->id,
+            'proof_type' => 'evidence_file',
+            'network' => 'ganache',
+            'environment' => 'local',
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/anpr-images/'.$image->id, [
+                'anpr_event_id' => $otherEvent->id,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'ANPR image evidence is immutable after blockchain proof creation.');
+
+        $this->assertDatabaseHas('anpr_images', [
+            'id' => $image->id,
+            'anpr_event_id' => $originalEvent->id,
+        ]);
+    }
 }

@@ -71,4 +71,20 @@ class AnprEvent extends Model
     {
         return $this->hasMany(AnprEventLog::class);
     }
+
+    public function hasBlockchainCreationProof(): bool
+    {
+        return BlockchainRecord::query()
+            ->where('entity_type', 'anpr_event')
+            ->where('entity_id', $this->id)
+            ->where('proof_type', 'entity_created')
+            ->exists();
+    }
+
+    public function hasProofedImages(): bool
+    {
+        return $this->images()
+            ->whereHas('blockchainRecord')
+            ->exists();
+    }
 }
