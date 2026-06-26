@@ -29,13 +29,94 @@ class BlockchainRecordController extends Controller
             'status' => ['nullable', Rule::in(['pending', 'queued', 'processing', 'submitted', 'confirmed', 'failed'])],
             'network' => ['nullable', Rule::in(['ganache', 'sepolia'])],
             'environment' => ['nullable', Rule::in(['local', 'staging', 'production'])],
-            'entity_type' => ['nullable', 'string', 'max:100', 'required_with:entity_id'],
-            'entity_id' => ['nullable', 'uuid', 'required_with:entity_type'],
+            'entity_type' => ['nullable', 'string', 'max:100'],
+            'entity_id' => ['nullable', 'uuid'],
+            'search' => ['nullable', 'string', 'max:255'],
             'sort_by' => ['nullable', Rule::in(['created_at', 'confirmed_at', 'block_number'])],
             'sort_order' => ['nullable', Rule::in(['asc', 'desc'])],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
+        $query = $this->buildFilteredQuery($validated);
+
+        $sortBy = $validated['sort_by'] ?? 'created_at';
+        $sortOrder = $validated['sort_order'] ?? 'desc';
+        $perPage = $validated['per_page'] ?? 15;
+
+        return BlockchainRecordResource::collection(
+            $query->orderBy($sortBy, $sortOrder)->paginate($perPage)->withQueryString()
+        );
+    }
+
+    public function summary(): JsonResponse
+    {
+        $this->authorizePatrolMonitoring();
+
+        $networkCounts = BlockchainRecord::query()
+            ->selectRaw('network, COUNT(*) as count')
+            ->groupBy('network')
+            ->orderBy('network')
+            ->get()
+            ->map(fn ($row) => [
+                'network' => $row->network,
+                'count' => (int) $row->count,
+            ])
+            ->values()
+            ->all();
+
+        $environmentCounts = BlockchainRecord::query()
+            ->selectRaw('environment, COUNT(*) as count')
+            ->groupBy('environment')
+            ->orderBy('environment')
+            ->get()
+            ->map(fn ($row) => [
+                'environment' => $row->environment,
+                'count' => (int) $row->count,
+            ])
+            ->values()
+            ->all();
+
+        $latestFailedRecords = BlockchainRecord::query()
+            ->failed()
+            ->orderByDesc('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (BlockchainRecord $record) => [
+                'id' => $record->id,
+                'entity_type' => $record->entity_type,
+                'entity_id' => $record->entity_id,
+                'status' => $record->status,
+                'network' => $record->network,
+                'environment' => $record->environment,
+                'last_error' => $record->last_error,
+                'updated_at' => $record->updated_at,
+            ])
+            ->values()
+            ->all();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Blockchain monitoring summary retrieved.',
+            'data' => [
+                'total' => BlockchainRecord::query()->count(),
+                'pending' => BlockchainRecord::query()->pending()->count(),
+                'queued' => BlockchainRecord::query()->queued()->count(),
+                'processing' => BlockchainRecord::query()->processing()->count(),
+                'submitted' => BlockchainRecord::query()->submitted()->count(),
+                'confirmed' => BlockchainRecord::query()->confirmed()->count(),
+                'failed' => BlockchainRecord::query()->failed()->count(),
+                'network_counts' => $networkCounts,
+                'environment_counts' => $environmentCounts,
+                'latest_failed_records' => $latestFailedRecords,
+            ],
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function buildFilteredQuery(array $validated)
+    {
         $query = BlockchainRecord::query();
 
         if (! empty($validated['status'])) {
@@ -57,18 +138,24 @@ class BlockchainRecordController extends Controller
             $query->byEnvironment($validated['environment']);
         }
 
-        if (! empty($validated['entity_type']) && ! empty($validated['entity_id'])) {
-            $query->where('entity_type', $validated['entity_type'])
-                ->where('entity_id', $validated['entity_id']);
+        if (! empty($validated['entity_type'])) {
+            $query->where('entity_type', $validated['entity_type']);
         }
 
-        $sortBy = $validated['sort_by'] ?? 'created_at';
-        $sortOrder = $validated['sort_order'] ?? 'desc';
-        $perPage = $validated['per_page'] ?? 15;
+        if (! empty($validated['entity_id'])) {
+            $query->where('entity_id', $validated['entity_id']);
+        }
 
-        return BlockchainRecordResource::collection(
-            $query->orderBy($sortBy, $sortOrder)->paginate($perPage)->withQueryString()
-        );
+        if (! empty($validated['search'])) {
+            $search = $validated['search'];
+            $query->where(function ($builder) use ($search): void {
+                $builder->where('record_hash', 'like', '%'.$search.'%')
+                    ->orWhere('tx_hash', 'like', '%'.$search.'%')
+                    ->orWhere('entity_id', 'like', '%'.$search.'%');
+            });
+        }
+
+        return $query;
     }
 
     /**

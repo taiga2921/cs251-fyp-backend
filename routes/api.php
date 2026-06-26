@@ -33,6 +33,8 @@ Route::middleware('auth:api')->group(function (): void {
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
 
+    Route::get('blockchain-records/summary', [BlockchainRecordController::class, 'summary'])
+        ->name('blockchain-records.summary');
     Route::apiResource('blockchain-records', BlockchainRecordController::class)->only(['index', 'show']);
     Route::post('blockchain-records/{blockchain_record}/verify', [BlockchainRecordController::class, 'verify'])
         ->name('blockchain-records.verify');
