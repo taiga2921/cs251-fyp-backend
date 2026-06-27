@@ -108,7 +108,8 @@ Cache driver stores hashed login limiter keys (`auth_login:{sha256}`). Raw email
    - Increment failed attempt counter
    - Write `login_failed` audit row
    - Attempts 1–4: **401** `Invalid credentials.`
-   - Attempt 5 (threshold): lock and return **429**
+   - Attempt 5 (threshold): lock, write `login_rate_limited`, return **429**
+5. Already-locked requests (before credential check): write `login_rate_limited`, return **429**
 5. Valid password: clear limiter for that email + IP; continue M5 branching (no JWT until OTP/setup verify).
 6. No response reveals whether the account exists, is disabled, or has 2FA enabled.
 
@@ -124,6 +125,7 @@ Retained from M5 with M6 audit additions:
 | Max failures | `AUTH_OTP_MAX_ATTEMPTS`; challenge `locked_at` set at threshold |
 | Expired / consumed / locked | **422** generic: `The authentication code is invalid or expired.` |
 | Success | Challenge marked consumed immediately; JWT + refresh cookie issued |
+| Disabled user race | Before session issuance, user is re-checked; missing/disabled users fail with the generic invalid/expired OTP response (**422**) |
 | Audit | `otp_failed` on each invalid code; `otp_challenge_locked` when threshold reached |
 | Enumeration | No remaining-attempt counts in API responses |
 
@@ -146,6 +148,8 @@ Two-factor **setup** sessions (M5) continue using the same `AUTH_OTP_MAX_ATTEMPT
 ## Audit logging notes
 
 M6 introduces a minimal `auth_audit_logs` table for security-sensitive blocked/failure events only. This is **not** a full audit trail (M7 will extend coverage for success paths, refresh, logout, and admin reporting).
+
+Both the lockout-threshold failed login and subsequent already-locked login attempts record `login_rate_limited`.
 
 Suggested fields: `id` (UUID), nullable `user_id`, `event_type`, nullable `email`, `ip_address`, `user_agent`, `metadata` (JSON), `occurred_at`.
 

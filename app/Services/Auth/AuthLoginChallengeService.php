@@ -58,7 +58,11 @@ class AuthLoginChallengeService
                 $lockedChallenge = AuthLoginChallenge::query()
                     ->whereKey($challengeId)
                     ->lockForUpdate()
-                    ->firstOrFail();
+                    ->first();
+
+                if ($lockedChallenge === null) {
+                    throw new InvalidOtpChallengeException('The authentication code is invalid or expired.');
+                }
 
                 if ($lockedChallenge->isConsumed() || $lockedChallenge->isLocked() || $lockedChallenge->isExpired()) {
                     return;
@@ -99,13 +103,22 @@ class AuthLoginChallengeService
             $lockedChallenge = AuthLoginChallenge::query()
                 ->whereKey($challengeId)
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->first();
+
+            if ($lockedChallenge === null) {
+                throw new InvalidOtpChallengeException('The authentication code is invalid or expired.');
+            }
 
             if ($lockedChallenge->isConsumed() || $lockedChallenge->isLocked() || $lockedChallenge->isExpired()) {
                 throw new InvalidOtpChallengeException('The authentication code is invalid or expired.');
             }
 
-            $user = User::query()->lockForUpdate()->findOrFail($lockedChallenge->user_id);
+            $user = User::query()->lockForUpdate()->find($lockedChallenge->user_id);
+
+            if ($user === null || ! $user->two_factor_enabled || $user->two_factor_secret === null) {
+                throw new InvalidOtpChallengeException('The authentication code is invalid or expired.');
+            }
+
             $lockedChallenge->markConsumed();
 
             return $user->fresh(['role']);

@@ -99,6 +99,38 @@ class AuthRateLimitLockoutTest extends TestCase
             ->assertJsonPath('message', 'Invalid credentials.');
     }
 
+    public function test_threshold_failed_login_writes_login_failed_and_rate_limited_audit(): void
+    {
+        $user = $this->enableTwoFactor($this->guardUser());
+        $ip = '203.0.113.15';
+
+        for ($i = 0; $i < 4; $i++) {
+            $this->postJson('/api/auth/login', [
+                'email' => $user->email,
+                'password' => 'wrong-password',
+            ], $this->serverVariables($ip))
+                ->assertUnauthorized();
+        }
+
+        $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'wrong-password',
+        ], $this->serverVariables($ip))
+            ->assertStatus(429)
+            ->assertJsonPath('message', 'Too many unsuccessful sign-in attempts. Please try again later.');
+
+        $this->assertDatabaseHas('auth_audit_logs', [
+            'event_type' => 'login_failed',
+            'email' => strtolower($user->email),
+            'ip_address' => $ip,
+        ]);
+        $this->assertDatabaseHas('auth_audit_logs', [
+            'event_type' => 'login_rate_limited',
+            'email' => strtolower($user->email),
+            'ip_address' => $ip,
+        ]);
+    }
+
     public function test_locked_login_writes_login_rate_limited_audit_row(): void
     {
         $user = $this->enableTwoFactor($this->guardUser());
@@ -339,6 +371,26 @@ class AuthRateLimitLockoutTest extends TestCase
         $this->withHeader('Authorization', 'Bearer '.$accessToken)
             ->getJson('/api/auth/me')
             ->assertUnauthorized();
+    }
+
+    public function test_otp_verification_fails_safely_when_user_disabled_before_session_issuance(): void
+    {
+        $user = $this->enableTwoFactor($this->guardUser());
+        $challengeId = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ])->json('data.login_challenge_id');
+
+        $user->delete();
+
+        $this->postJson('/api/auth/otp/verify', [
+            'login_challenge_id' => $challengeId,
+            'otp' => $this->currentTotp(),
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'The authentication code is invalid or expired.')
+            ->assertJsonMissingPath('data.access_token')
+            ->assertCookieMissing('refresh_token');
     }
 
     /**

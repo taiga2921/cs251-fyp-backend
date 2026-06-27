@@ -78,6 +78,8 @@ class AuthController extends Controller
                 $this->authAuditService->record('login_failed', $request, user: $user, email: $email);
 
                 if ($justLocked) {
+                    $this->authAuditService->record('login_rate_limited', $request, user: $user, email: $email);
+
                     return $this->loginLockoutResponse(
                         $this->loginRateLimiter->availableIn($email, $request)
                     );
