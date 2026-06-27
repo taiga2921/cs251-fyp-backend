@@ -1103,6 +1103,8 @@ The `anpr_event_logs` module is implemented and wired:
 
 **Login Module M1 (refresh sessions):** DB-backed refresh tokens, `POST /api/auth/refresh`, and HttpOnly cookie behavior are documented in [`docs/login/m1-laravel-session-foundation-and-refresh-tokens.md`](docs/login/m1-laravel-session-foundation-and-refresh-tokens.md).
 
+**Login Module M2 (frontend refresh-on-401):** React API client refresh queue, single retry, and session-expired UX are documented in [`docs/login/m2-frontend-refresh-on-401-architecture.md`](docs/login/m2-frontend-refresh-on-401-architecture.md). No backend runtime changes in M2.
+
 ### Authentication method
 
 - **JWT** using `**php-open-source-saver/jwt-auth`\*\*.
