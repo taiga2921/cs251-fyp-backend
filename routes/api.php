@@ -3,7 +3,9 @@
 use App\Http\Controllers\Api\AnprEventController;
 use App\Http\Controllers\Api\AnprEventLogController;
 use App\Http\Controllers\Api\AnprImageController;
+use App\Http\Controllers\Api\AuthAuditLogController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AuthSessionController;
 use App\Http\Controllers\Api\BlockchainRecordController;
 use App\Http\Controllers\Api\CameraController;
 use App\Http\Controllers\Api\CheckpointController;
@@ -37,6 +39,9 @@ Route::middleware('auth:api')->group(function (): void {
     });
 
     Route::get('auth/me', [AuthController::class, 'me']);
+    Route::post('auth/logout-all', [AuthSessionController::class, 'logoutAll']);
+    Route::get('auth/sessions', [AuthSessionController::class, 'index']);
+    Route::delete('auth/sessions/{session}', [AuthSessionController::class, 'destroy']);
 
     Route::get('blockchain-records/summary', [BlockchainRecordController::class, 'summary'])
         ->name('blockchain-records.summary');
@@ -47,6 +52,7 @@ Route::middleware('auth:api')->group(function (): void {
         ->name('blockchain-records.refresh');
 
     Route::middleware('admin')->group(function (): void {
+        Route::get('auth/audit-logs', [AuthAuditLogController::class, 'index']);
         Route::post('blockchain-records/{blockchain_record}/retry', [BlockchainRecordController::class, 'retry'])
             ->name('blockchain-records.retry');
         Route::apiResource('roles', RoleController::class)->only(['index', 'show']);

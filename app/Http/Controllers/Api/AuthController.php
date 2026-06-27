@@ -66,7 +66,12 @@ class AuthController extends Controller
             try {
                 $this->loginRateLimiter->ensureNotLocked($email, $request);
             } catch (LoginRateLimitedException $exception) {
-                $this->authAuditService->record('login_rate_limited', $request, email: $email);
+                $this->authAuditService->record(
+                    AuthAuditService::EVENT_LOGIN_RATE_LIMITED,
+                    AuthAuditService::STATUS_BLOCKED,
+                    $request,
+                    email: $email,
+                );
 
                 return $this->loginLockoutResponse($exception->retryAfterSeconds);
             }
@@ -75,10 +80,22 @@ class AuthController extends Controller
 
             if ($user === null || ! Hash::check($credentials['password'], $user->password)) {
                 $justLocked = $this->loginRateLimiter->recordFailedAttempt($email, $request);
-                $this->authAuditService->record('login_failed', $request, user: $user, email: $email);
+                $this->authAuditService->record(
+                    AuthAuditService::EVENT_LOGIN_PASSWORD_FAILURE,
+                    AuthAuditService::STATUS_FAILURE,
+                    $request,
+                    user: $user,
+                    email: $email,
+                );
 
                 if ($justLocked) {
-                    $this->authAuditService->record('login_rate_limited', $request, user: $user, email: $email);
+                    $this->authAuditService->record(
+                        AuthAuditService::EVENT_LOGIN_RATE_LIMITED,
+                        AuthAuditService::STATUS_BLOCKED,
+                        $request,
+                        user: $user,
+                        email: $email,
+                    );
 
                     return $this->loginLockoutResponse(
                         $this->loginRateLimiter->availableIn($email, $request)
@@ -98,6 +115,7 @@ class AuthController extends Controller
 
             if ($user->setup_required) {
                 $setupSession = $this->passwordSetupService->createForUser($user);
+                $this->recordLoginPasswordSuccess($request, $user, 'password_setup_required');
 
                 return response()->json([
                     'success' => true,
@@ -116,6 +134,7 @@ class AuthController extends Controller
 
             if (! $user->two_factor_enabled) {
                 $setupSession = $this->twoFactorSetupService->createForUser($user);
+                $this->recordLoginPasswordSuccess($request, $user, 'two_factor_setup_required');
 
                 return response()->json([
                     'success' => true,
@@ -134,6 +153,7 @@ class AuthController extends Controller
             }
 
             $challenge = $this->authLoginChallengeService->createForUser($user, $request);
+            $this->recordLoginPasswordSuccess($request, $user, 'otp_required');
 
             return response()->json([
                 'success' => true,
@@ -174,6 +194,13 @@ class AuthController extends Controller
             );
 
             $setupSession = $this->twoFactorSetupService->createForUser($user);
+
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_PASSWORD_SETUP_COMPLETED,
+                AuthAuditService::STATUS_SUCCESS,
+                $request,
+                user: $user,
+            );
 
             return response()->json([
                 'success' => true,
@@ -258,6 +285,13 @@ class AuthController extends Controller
                 $request->validated('otp'),
             );
 
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_TWO_FACTOR_SETUP_COMPLETED,
+                AuthAuditService::STATUS_SUCCESS,
+                $request,
+                user: $user,
+            );
+
             return $this->issueAuthenticatedSession($user, $request);
         } catch (InvalidTwoFactorSetupTokenException $e) {
             $message = str_contains($e->getMessage(), 'authentication code')
@@ -291,6 +325,14 @@ class AuthController extends Controller
                 $request->validated('otp'),
             );
 
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_OTP_SUCCESS,
+                AuthAuditService::STATUS_SUCCESS,
+                $request,
+                user: $user,
+                metadata: ['login_challenge_id' => $request->validated('login_challenge_id')],
+            );
+
             return $this->issueAuthenticatedSession($user, $request);
         } catch (InvalidOtpChallengeException) {
             return response()->json([
@@ -318,6 +360,12 @@ class AuthController extends Controller
         $plainToken = $this->refreshTokenService->readPlainTokenFromRequest($request);
 
         if ($plainToken === null) {
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_REFRESH_FAILURE,
+                AuthAuditService::STATUS_FAILURE,
+                $request,
+            );
+
             return $this->refreshFailureResponse($forgetCookie);
         }
 
@@ -329,7 +377,19 @@ class AuthController extends Controller
                 $this->refreshTokenService->revokeFromPlainToken($plainToken);
 
                 if ($user !== null && $user->trashed()) {
-                    $this->authAuditService->record('refresh_blocked_disabled_user', $request, user: $user);
+                    $this->authAuditService->record(
+                        AuthAuditService::EVENT_REFRESH_BLOCKED_DISABLED_USER,
+                        AuthAuditService::STATUS_BLOCKED,
+                        $request,
+                        user: $user,
+                    );
+                } else {
+                    $this->authAuditService->record(
+                        AuthAuditService::EVENT_REFRESH_FAILURE,
+                        AuthAuditService::STATUS_FAILURE,
+                        $request,
+                        user: $user,
+                    );
                 }
 
                 return $this->refreshFailureResponse($forgetCookie);
@@ -340,12 +400,45 @@ class AuthController extends Controller
             $this->syncAccessTokenTtl();
             $accessToken = auth('api')->login($user);
 
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_REFRESH_SUCCESS,
+                AuthAuditService::STATUS_SUCCESS,
+                $request,
+                user: $user,
+                metadata: ['session_id' => $rotated['model']->getKey()],
+            );
+
             return $this->buildAccessTokenResponse($user, $accessToken)
                 ->withCookie($this->refreshTokenService->makeCookie($rotated['plain_token']));
-        } catch (RefreshTokenReuseException|InvalidRefreshTokenException) {
+        } catch (RefreshTokenReuseException $exception) {
+            $token = $this->refreshTokenService->findByPlainToken($plainToken);
+            $reuseUser = $token?->user;
+
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_REFRESH_TOKEN_REUSE_DETECTED,
+                AuthAuditService::STATUS_BLOCKED,
+                $request,
+                user: $reuseUser,
+                metadata: ['session_id' => $token?->getKey()],
+            );
+
+            return $this->refreshFailureResponse($forgetCookie);
+        } catch (InvalidRefreshTokenException) {
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_REFRESH_FAILURE,
+                AuthAuditService::STATUS_FAILURE,
+                $request,
+            );
+
             return $this->refreshFailureResponse($forgetCookie);
         } catch (Throwable $e) {
             report($e);
+
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_REFRESH_FAILURE,
+                AuthAuditService::STATUS_FAILURE,
+                $request,
+            );
 
             return $this->refreshFailureResponse($forgetCookie);
         }
@@ -379,6 +472,17 @@ class AuthController extends Controller
             $this->refreshTokenService->readPlainTokenFromRequest($request)
         );
 
+        $authUser = auth('api')->user();
+
+        if ($authUser !== null) {
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_LOGOUT_SUCCESS,
+                AuthAuditService::STATUS_SUCCESS,
+                $request,
+                user: $authUser,
+            );
+        }
+
         if ($request->bearerToken() !== null) {
             try {
                 auth('api')->logout();
@@ -392,6 +496,17 @@ class AuthController extends Controller
             'message' => 'Logout successful.',
             'data' => null,
         ])->withCookie($forgetCookie);
+    }
+
+    private function recordLoginPasswordSuccess(Request $request, User $user, string $nextStep): void
+    {
+        $this->authAuditService->record(
+            AuthAuditService::EVENT_LOGIN_PASSWORD_SUCCESS,
+            AuthAuditService::STATUS_SUCCESS,
+            $request,
+            user: $user,
+            metadata: ['next_step' => $nextStep],
+        );
     }
 
     private function issueAuthenticatedSession(User $user, Request $request): JsonResponse

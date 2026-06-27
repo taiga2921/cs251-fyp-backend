@@ -133,7 +133,8 @@ class UserController extends Controller
         $user->delete();
 
         $this->authAuditService->record(
-            'user_disabled_sessions_revoked',
+            AuthAuditService::EVENT_USER_DISABLED_SESSIONS_REVOKED,
+            AuthAuditService::STATUS_REVOKED,
             user: $user,
             metadata: ['revoked_count' => $revokedCount],
         );

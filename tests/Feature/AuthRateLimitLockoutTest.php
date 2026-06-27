@@ -6,6 +6,7 @@ use App\Models\AuthAuditLog;
 use App\Models\AuthLoginChallenge;
 use App\Models\RefreshToken;
 use App\Models\User;
+use App\Services\Auth\AuthAuditService;
 use App\Services\Auth\RefreshTokenService;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -53,7 +54,7 @@ class AuthRateLimitLockoutTest extends TestCase
         }
 
         $this->assertDatabaseCount('auth_audit_logs', 3);
-        $this->assertSame(3, AuthAuditLog::query()->where('event_type', 'login_failed')->count());
+        $this->assertSame(3, AuthAuditLog::query()->where('event_type', AuthAuditService::EVENT_LOGIN_PASSWORD_FAILURE)->count());
     }
 
     public function test_five_failed_login_attempts_trigger_lockout(): void
@@ -120,12 +121,12 @@ class AuthRateLimitLockoutTest extends TestCase
             ->assertJsonPath('message', 'Too many unsuccessful sign-in attempts. Please try again later.');
 
         $this->assertDatabaseHas('auth_audit_logs', [
-            'event_type' => 'login_failed',
+            'event_type' => AuthAuditService::EVENT_LOGIN_PASSWORD_FAILURE,
             'email' => strtolower($user->email),
             'ip_address' => $ip,
         ]);
         $this->assertDatabaseHas('auth_audit_logs', [
-            'event_type' => 'login_rate_limited',
+            'event_type' => AuthAuditService::EVENT_LOGIN_RATE_LIMITED,
             'email' => strtolower($user->email),
             'ip_address' => $ip,
         ]);
@@ -143,7 +144,7 @@ class AuthRateLimitLockoutTest extends TestCase
             ->assertStatus(429);
 
         $this->assertDatabaseHas('auth_audit_logs', [
-            'event_type' => 'login_rate_limited',
+            'event_type' => AuthAuditService::EVENT_LOGIN_RATE_LIMITED,
             'email' => strtolower($user->email),
         ]);
     }
@@ -240,7 +241,7 @@ class AuthRateLimitLockoutTest extends TestCase
 
         $challenge = AuthLoginChallenge::query()->findOrFail($challengeId);
         $this->assertSame(1, $challenge->failed_attempts);
-        $this->assertDatabaseHas('auth_audit_logs', ['event_type' => 'otp_failed']);
+        $this->assertDatabaseHas('auth_audit_logs', ['event_type' => AuthAuditService::EVENT_OTP_FAILURE]);
     }
 
     public function test_otp_challenge_locks_after_max_failed_attempts(): void
@@ -260,7 +261,7 @@ class AuthRateLimitLockoutTest extends TestCase
 
         $challenge = AuthLoginChallenge::query()->findOrFail($challengeId);
         $this->assertNotNull($challenge->locked_at);
-        $this->assertDatabaseHas('auth_audit_logs', ['event_type' => 'otp_challenge_locked']);
+        $this->assertDatabaseHas('auth_audit_logs', ['event_type' => AuthAuditService::EVENT_OTP_CHALLENGE_LOCKED]);
 
         $this->postJson('/api/auth/otp/verify', [
             'login_challenge_id' => $challengeId,
@@ -333,7 +334,7 @@ class AuthRateLimitLockoutTest extends TestCase
             ->assertCookieExpired('refresh_token');
 
         $this->assertDatabaseHas('auth_audit_logs', [
-            'event_type' => 'refresh_blocked_disabled_user',
+            'event_type' => AuthAuditService::EVENT_REFRESH_BLOCKED_DISABLED_USER,
             'user_id' => $user->getKey(),
         ]);
     }
@@ -351,7 +352,7 @@ class AuthRateLimitLockoutTest extends TestCase
         $token = RefreshToken::query()->findOrFail($created['model']->getKey());
         $this->assertNotNull($token->revoked_at);
         $this->assertDatabaseHas('auth_audit_logs', [
-            'event_type' => 'user_disabled_sessions_revoked',
+            'event_type' => AuthAuditService::EVENT_USER_DISABLED_SESSIONS_REVOKED,
             'user_id' => $target->getKey(),
         ]);
     }

@@ -10,6 +10,7 @@ class TwoFactorSetupService
 {
     public function __construct(
         private readonly TwoFactorService $twoFactorService,
+        private readonly AuthAuditService $authAuditService,
     ) {}
 
     /**
@@ -63,6 +64,12 @@ class TwoFactorSetupService
             $session->forceFill([
                 'pending_secret' => $this->twoFactorService->encryptSecret($plainSecret),
             ])->save();
+
+            $this->authAuditService->record(
+                AuthAuditService::EVENT_TWO_FACTOR_SETUP_STARTED,
+                AuthAuditService::STATUS_SUCCESS,
+                user: $user,
+            );
 
             return [
                 'manual_key' => $plainSecret,

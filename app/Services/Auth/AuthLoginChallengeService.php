@@ -79,7 +79,8 @@ class AuthLoginChallengeService
             });
 
             $this->authAuditService->record(
-                'otp_failed',
+                AuthAuditService::EVENT_OTP_FAILURE,
+                AuthAuditService::STATUS_FAILURE,
                 user: $user,
                 metadata: ['login_challenge_id' => $challengeId],
                 ipAddress: $challenge->ip_address,
@@ -88,7 +89,8 @@ class AuthLoginChallengeService
 
             if ($challengeLocked) {
                 $this->authAuditService->record(
-                    'otp_challenge_locked',
+                    AuthAuditService::EVENT_OTP_CHALLENGE_LOCKED,
+                    AuthAuditService::STATUS_BLOCKED,
                     user: $user,
                     metadata: ['login_challenge_id' => $challengeId],
                     ipAddress: $challenge->ip_address,

@@ -18,6 +18,7 @@ class AuthAuditLog extends Model
     protected $fillable = [
         'user_id',
         'event_type',
+        'status',
         'email',
         'ip_address',
         'user_agent',
