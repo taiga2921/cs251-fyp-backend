@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AuthLoginChallenge;
 use App\Models\RefreshToken;
 use App\Models\Role;
+use App\Models\TwoFactorSetupSession;
 use App\Models\User;
 use App\Services\Auth\RefreshTokenService;
 use App\Services\Auth\TwoFactorService;
@@ -100,6 +101,57 @@ class AuthTwoFactorTest extends TestCase
         $user->refresh();
         $this->assertFalse($user->two_factor_enabled);
         $this->assertNull($user->two_factor_confirmed_at);
+    }
+
+    public function test_two_factor_setup_verify_with_invalid_otp_increments_failed_attempts(): void
+    {
+        $token = $this->createTwoFactorSetupToken();
+
+        $this->postJson('/api/auth/2fa/setup/start', [
+            'two_factor_setup_token' => $token,
+        ])->assertOk();
+
+        $this->postJson('/api/auth/2fa/setup/verify', [
+            'two_factor_setup_token' => $token,
+            'otp' => '000000',
+        ])->assertStatus(422);
+
+        $session = TwoFactorSetupSession::query()
+            ->where('user_id', User::query()->where('email', 'newguard@example.com')->value('id'))
+            ->firstOrFail();
+
+        $this->assertSame(1, $session->failed_attempts);
+    }
+
+    public function test_two_factor_setup_session_locks_after_max_failed_attempts(): void
+    {
+        $token = $this->createTwoFactorSetupToken();
+
+        $start = $this->postJson('/api/auth/2fa/setup/start', [
+            'two_factor_setup_token' => $token,
+        ])->assertOk();
+
+        $manualKey = $start->json('data.manual_key');
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->postJson('/api/auth/2fa/setup/verify', [
+                'two_factor_setup_token' => $token,
+                'otp' => '000000',
+            ]);
+        }
+
+        $session = TwoFactorSetupSession::query()
+            ->where('user_id', User::query()->where('email', 'newguard@example.com')->value('id'))
+            ->firstOrFail();
+
+        $this->assertNotNull($session->locked_at);
+
+        $validOtp = app(TwoFactorService::class)->generateTotp($manualKey);
+
+        $this->postJson('/api/auth/2fa/setup/verify', [
+            'two_factor_setup_token' => $token,
+            'otp' => $validOtp,
+        ])->assertStatus(422);
     }
 
     public function test_two_factor_setup_verify_with_valid_otp_issues_session(): void

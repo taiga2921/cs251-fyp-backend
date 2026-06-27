@@ -25,6 +25,8 @@ class TwoFactorSetupSession extends Model
         'pending_secret',
         'expires_at',
         'verified_at',
+        'failed_attempts',
+        'locked_at',
     ];
 
     /** @return array<string, string> */
@@ -33,6 +35,8 @@ class TwoFactorSetupSession extends Model
         return [
             'expires_at' => 'datetime',
             'verified_at' => 'datetime',
+            'locked_at' => 'datetime',
+            'failed_attempts' => 'integer',
         ];
     }
 
@@ -51,9 +55,14 @@ class TwoFactorSetupSession extends Model
         return $this->verified_at !== null;
     }
 
+    public function isLocked(): bool
+    {
+        return $this->locked_at !== null;
+    }
+
     public function isActive(): bool
     {
-        return ! $this->isExpired() && ! $this->isVerified();
+        return ! $this->isExpired() && ! $this->isVerified() && ! $this->isLocked();
     }
 
     /**
@@ -64,6 +73,7 @@ class TwoFactorSetupSession extends Model
     {
         return $query
             ->whereNull('verified_at')
+            ->whereNull('locked_at')
             ->where('expires_at', '>', now());
     }
 }

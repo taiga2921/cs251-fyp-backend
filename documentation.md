@@ -1114,7 +1114,7 @@ The `anpr_event_logs` module is implemented and wired:
 
 **Login Module M4 (first-login password setup):** Setup-required users, hashed setup tokens, and password completion API are documented in [`docs/login/m4-first-login-password-setup.md`](docs/login/m4-first-login-password-setup.md).
 
-**Login Module M5 (mandatory TOTP 2FA):** TOTP enrollment, login OTP challenges, and session gating are documented in [`docs/login/m5-totp-two-factor-authentication.md`](docs/login/m5-totp-two-factor-authentication.md).
+**Login Module M5 (mandatory TOTP 2FA):** TOTP enrollment, login OTP challenges, setup-session attempt limiting, and session gating are documented in [`docs/login/m5-totp-two-factor-authentication.md`](docs/login/m5-totp-two-factor-authentication.md).
 
 ### Authentication method
 

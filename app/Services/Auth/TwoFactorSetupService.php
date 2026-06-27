@@ -4,7 +4,6 @@ namespace App\Services\Auth;
 
 use App\Models\TwoFactorSetupSession;
 use App\Models\User;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TwoFactorSetupService
@@ -78,23 +77,63 @@ class TwoFactorSetupService
      */
     public function verifySetup(string $plainToken, string $otp): User
     {
-        return DB::transaction(function () use ($plainToken, $otp) {
-            $session = $this->lockActiveSession($plainToken);
-            $user = User::query()->lockForUpdate()->findOrFail($session->user_id);
+        $session = TwoFactorSetupSession::query()
+            ->where('token_hash', $this->hashPlainToken($plainToken))
+            ->first();
 
-            if ($session->pending_secret === null) {
+        if ($session === null || $session->isExpired() || $session->isVerified() || $session->isLocked()) {
+            throw new InvalidTwoFactorSetupTokenException('Two-factor setup token is invalid or expired.');
+        }
+
+        $user = User::query()->find($session->user_id);
+
+        if ($user === null || $user->two_factor_enabled || $session->pending_secret === null) {
+            throw new InvalidTwoFactorSetupTokenException('Two-factor setup token is invalid or expired.');
+        }
+
+        $plainSecret = $this->twoFactorService->decryptSecret($session->pending_secret);
+
+        if (! $this->twoFactorService->verifyCode($plainSecret, $otp)) {
+            DB::transaction(function () use ($plainToken) {
+                $lockedSession = TwoFactorSetupSession::query()
+                    ->where('token_hash', $this->hashPlainToken($plainToken))
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                if ($lockedSession->isExpired() || $lockedSession->isVerified() || $lockedSession->isLocked()) {
+                    return;
+                }
+
+                $failedAttempts = $lockedSession->failed_attempts + 1;
+                $maxAttempts = (int) config('auth_security.otp_max_attempts', 5);
+
+                $lockedSession->forceFill([
+                    'failed_attempts' => $failedAttempts,
+                    'locked_at' => $failedAttempts >= $maxAttempts ? now() : null,
+                ])->save();
+            });
+
+            throw new InvalidTwoFactorSetupTokenException('The provided authentication code is invalid.');
+        }
+
+        return DB::transaction(function () use ($plainToken, $plainSecret) {
+            $lockedSession = TwoFactorSetupSession::query()
+                ->where('token_hash', $this->hashPlainToken($plainToken))
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedSession->isExpired() || $lockedSession->isVerified() || $lockedSession->isLocked()) {
                 throw new InvalidTwoFactorSetupTokenException('Two-factor setup token is invalid or expired.');
             }
 
-            $plainSecret = $this->twoFactorService->decryptSecret($session->pending_secret);
-
-            if (! $this->twoFactorService->verifyCode($plainSecret, $otp)) {
-                throw new InvalidTwoFactorSetupTokenException('The provided authentication code is invalid.');
+            if ($lockedSession->pending_secret === null) {
+                throw new InvalidTwoFactorSetupTokenException('Two-factor setup token is invalid or expired.');
             }
 
+            $user = User::query()->lockForUpdate()->findOrFail($lockedSession->user_id);
             $this->twoFactorService->enableTwoFactorForUser($user, $plainSecret);
 
-            $session->forceFill([
+            $lockedSession->forceFill([
                 'verified_at' => now(),
                 'pending_secret' => null,
             ])->save();
@@ -113,7 +152,7 @@ class TwoFactorSetupService
             ->lockForUpdate()
             ->first();
 
-        if ($session === null || $session->isExpired() || $session->isVerified()) {
+        if ($session === null || $session->isExpired() || $session->isVerified() || $session->isLocked()) {
             throw new InvalidTwoFactorSetupTokenException('Two-factor setup token is invalid or expired.');
         }
 

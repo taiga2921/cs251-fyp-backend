@@ -30,6 +30,7 @@ Email/password alone must not issue access tokens for fully initialized users.
 | Refresh guard | Rejects users with `setup_required = true` or `two_factor_enabled = false` |
 | Frontend | `/first-login/2fa`, `/login/otp`, login branching, route guards |
 | Challenge lockout | Failed OTP attempts increment `failed_attempts`; challenge locks at configured max |
+| Setup-session lockout | **M5 hardening:** TOTP setup verify uses same `AUTH_OTP_MAX_ATTEMPTS` limit on `two_factor_setup_sessions` |
 | Tests | `TwoFactorServiceTest`, `AuthTwoFactorTest`, frontend Vitest coverage |
 
 ### Out of scope (M6+)
@@ -253,8 +254,10 @@ Existing columns `two_factor_enabled`, `two_factor_secret` are used. Secret is e
 | `pending_secret` | encrypted text | Pending TOTP secret until OTP confirmed |
 | `expires_at` | timestamp | |
 | `verified_at` | nullable timestamp | |
+| `failed_attempts` | unsigned int | Default 0; incremented on invalid setup OTP |
+| `locked_at` | nullable timestamp | Set when `failed_attempts` reaches `AUTH_OTP_MAX_ATTEMPTS` |
 
----
+Setup verification reuses `auth_security.otp_max_attempts` (same as login OTP challenges). Locked setup sessions reject further verify attempts even with a valid OTP.
 
 ## Configuration
 
@@ -264,7 +267,7 @@ Existing columns `two_factor_enabled`, `two_factor_secret` are used. Secret is e
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `AUTH_OTP_CHALLENGE_TTL` | 5 | Login challenge TTL (minutes) |
-| `AUTH_OTP_MAX_ATTEMPTS` | 5 | Failed OTP attempts before challenge lock |
+| `AUTH_OTP_MAX_ATTEMPTS` | 5 | Failed OTP attempts before login challenge **or** setup session lock |
 | `AUTH_TWO_FACTOR_SETUP_TTL` | 10 | 2FA setup token TTL (minutes) |
 | `AUTH_TOTP_ISSUER` | `IKH One` | TOTP issuer in otpauth URI |
 | `AUTH_TOTP_WINDOW` | 1 | Time step tolerance (± steps) |
@@ -283,6 +286,7 @@ Existing columns `two_factor_enabled`, `two_factor_secret` are used. Secret is e
 | Short-lived challenges | TTL + single-use consumption |
 | Hashed setup tokens | Plain token never persisted |
 | Generic OTP errors | Safe messages; no secret/challenge leakage |
+| Setup-session brute force | `failed_attempts` + `locked_at` on `two_factor_setup_sessions` (**M5 hardening**) |
 | Refresh guard | Incomplete users cannot refresh |
 | Frontend non-persistence | Challenge/setup tokens in route state only |
 
@@ -295,7 +299,7 @@ Existing columns `two_factor_enabled`, `two_factor_secret` are used. Secret is e
 | Suite | Coverage |
 |-------|----------|
 | `tests/Unit/Auth/TwoFactorServiceTest.php` | Secret format, otpauth URI, verify, window, encryption |
-| `tests/Feature/AuthTwoFactorTest.php` | Full M5 flows, lockout, expiry, refresh rejection |
+| `tests/Feature/AuthTwoFactorTest.php` | Full M5 flows, login challenge lockout, setup-session failed attempts + lockout, refresh rejection |
 | `tests/Feature/AuthPasswordSetupTest.php` | M4 regression + 2FA handoff |
 | `tests/Feature/AuthRefreshTokenTest.php` | Refresh with 2FA-enabled users |
 | `tests/Feature/AuthCorsTest.php` | Credentialed CORS through OTP verify |
@@ -348,19 +352,29 @@ yarn build
 - [ ] Normal login for 2FA user returns `otp_required` (no token)
 - [ ] Valid login OTP issues JWT + refresh cookie
 - [ ] Invalid/expired/used OTP challenge fails with generic error
-- [ ] Too many wrong OTP attempts lock the challenge
+- [ ] Too many wrong setup OTP attempts lock the setup session
 - [ ] Protected routes reject users without completed 2FA
 - [ ] Refresh fails for users without completed 2FA
 - [ ] `two_factor_secret` never appears in API responses
 
 ---
 
+## M5 hardening (cleanup patch)
+
+Post-M5 cleanup added:
+
+- **Setup-session attempt limiting** — `two_factor_setup_sessions.failed_attempts` and `locked_at` (migration `2026_06_30_100000_add_attempt_tracking_to_two_factor_setup_sessions_table.php`). Reuses `AUTH_OTP_MAX_ATTEMPTS`.
+- **Frontend `RoleProtectedRoute`** — explicit incomplete-2FA guard aligned with `ProtectedRoute`.
+- **Frontend documentation** — M5 login/setup/OTP flows documented; stale direct-token login wording removed.
+
+This is treated as **M5 hardening**, not a new milestone. Account-level lockout and audit UI remain M6/M7 handoff.
+
 ## Known limitations
 
 - Seeded demo users (`admin@example.com`, etc.) have `two_factor_enabled = false` until enrolled through login or a test helper.
 - No admin 2FA reset endpoint (deferred).
 - No recovery codes (deferred).
-- Challenge lockout is per-challenge, not per-user account lockout.
+- Challenge lockout is per-challenge; setup lockout is per-setup-session (not per-user account lockout).
 
 ---
 
@@ -383,6 +397,7 @@ yarn build
 - `database/migrations/2026_06_29_100000_add_two_factor_confirmed_at_to_users_table.php`
 - `database/migrations/2026_06_29_100100_create_auth_login_challenges_table.php`
 - `database/migrations/2026_06_29_100200_create_two_factor_setup_sessions_table.php`
+- `database/migrations/2026_06_30_100000_add_attempt_tracking_to_two_factor_setup_sessions_table.php`
 - `app/Models/AuthLoginChallenge.php`
 - `app/Models/TwoFactorSetupSession.php`
 - `app/Services/Auth/TwoFactorService.php`
@@ -394,7 +409,9 @@ yarn build
 - `app/Http/Requests/VerifyTwoFactorSetupRequest.php`
 - `app/Http/Requests/VerifyOtpRequest.php`
 - `tests/Unit/Auth/TwoFactorServiceTest.php`
-- `tests/Feature/AuthTwoFactorTest.php`
+- `tests/Feature/AuthTwoFactorTest.php` (includes setup-session lockout tests)
+- `frontend-react-v1/src/routes/guards/RoleProtectedRoute.jsx`
+- `frontend-react-v1/src/routes/guards/RoleProtectedRoute.test.jsx`
 - `tests/Concerns/EnablesTwoFactorAuth.php`
 
 ### Backend (modified)
