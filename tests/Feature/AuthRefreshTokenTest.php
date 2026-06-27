@@ -308,6 +308,35 @@ class AuthRefreshTokenTest extends TestCase
             ->assertCookieExpired('ikh_refresh_token');
     }
 
+    public function test_refresh_rejects_setup_required_user_and_revokes_session(): void
+    {
+        $user = $this->guardUser();
+
+        $loginResponse = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $cookie = $this->extractRefreshCookie($loginResponse);
+        $refreshTokenId = RefreshToken::query()->value('id');
+
+        $user->forceFill(['setup_required' => true])->save();
+
+        $refreshResponse = $this->withUnencryptedCookie($cookie->getName(), $cookie->getValue())
+            ->withCredentials()
+            ->postJson('/api/auth/refresh');
+
+        $refreshResponse->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Refresh session is invalid or expired.')
+            ->assertCookieExpired($this->refreshCookieName());
+
+        $this->assertNull($refreshResponse->json('data.access_token'));
+
+        $refreshToken = RefreshToken::query()->find($refreshTokenId);
+        $this->assertNotNull($refreshToken?->revoked_at);
+    }
+
     private function refreshCookieName(): string
     {
         return (string) config('auth_security.refresh_cookie_name', 'refresh_token');

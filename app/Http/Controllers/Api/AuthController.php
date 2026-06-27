@@ -160,8 +160,16 @@ class AuthController extends Controller
         }
 
         try {
+            $validatedToken = $this->refreshTokenService->validatePlainToken($plainToken);
+            $user = $validatedToken->user()->with('role')->firstOrFail();
+
+            if ($user->setup_required) {
+                $this->refreshTokenService->revokeFromPlainToken($plainToken);
+
+                return $this->refreshFailureResponse($forgetCookie);
+            }
+
             $rotated = $this->refreshTokenService->rotatePlainToken($plainToken, $request);
-            $user = $rotated['model']->user()->with('role')->firstOrFail();
 
             $this->syncAccessTokenTtl();
             $accessToken = auth('api')->login($user);

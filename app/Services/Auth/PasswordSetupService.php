@@ -14,24 +14,31 @@ class PasswordSetupService
      */
     public function createForUser(User $user): array
     {
-        PasswordSetupToken::query()
-            ->where('user_id', $user->getKey())
-            ->whereNull('used_at')
-            ->delete();
+        return DB::transaction(function () use ($user) {
+            $lockedUser = User::query()
+                ->whereKey($user->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $plainToken = bin2hex(random_bytes(32));
-        $ttlHours = (int) config('auth_security.password_setup_token_ttl_hours', 24);
+            PasswordSetupToken::query()
+                ->where('user_id', $lockedUser->getKey())
+                ->whereNull('used_at')
+                ->delete();
 
-        $model = PasswordSetupToken::query()->create([
-            'user_id' => $user->getKey(),
-            'token_hash' => $this->hashPlainToken($plainToken),
-            'expires_at' => now()->addHours($ttlHours),
-        ]);
+            $plainToken = bin2hex(random_bytes(32));
+            $ttlHours = (int) config('auth_security.password_setup_token_ttl_hours', 24);
 
-        return [
-            'model' => $model,
-            'plain_token' => $plainToken,
-        ];
+            $model = PasswordSetupToken::query()->create([
+                'user_id' => $lockedUser->getKey(),
+                'token_hash' => $this->hashPlainToken($plainToken),
+                'expires_at' => now()->addHours($ttlHours),
+            ]);
+
+            return [
+                'model' => $model,
+                'plain_token' => $plainToken,
+            ];
+        });
     }
 
     public function findByPlainToken(string $plainToken): ?PasswordSetupToken

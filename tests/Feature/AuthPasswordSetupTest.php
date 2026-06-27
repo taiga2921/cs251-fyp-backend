@@ -51,7 +51,7 @@ class AuthPasswordSetupTest extends TestCase
             ->postJson('/api/users', [
                 'name' => 'New Guard',
                 'email' => 'newguard@example.com',
-                'password' => 'TempPass1!',
+                'password' => 'TempPassword1!',
                 'role_id' => $roleId,
             ]);
 
@@ -236,6 +236,91 @@ class AuthPasswordSetupTest extends TestCase
             ->assertCookie('refresh_token');
 
         $this->assertDatabaseCount('refresh_tokens', 1);
+    }
+
+    public function test_admin_user_creation_rejects_password_shorter_than_configured_minimum(): void
+    {
+        $admin = $this->adminUser();
+        $roleId = Role::query()->where('name', 'Guard')->value('id');
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/users', [
+                'name' => 'Short Password User',
+                'email' => 'shortpass@example.com',
+                'password' => 'Short1!',
+                'role_id' => $roleId,
+            ])
+            ->assertStatus(422);
+
+        $errors = $response->json('data.errors');
+        $this->assertIsArray($errors);
+        $this->assertArrayHasKey('password', $errors);
+    }
+
+    public function test_admin_user_creation_accepts_password_meeting_configured_minimum(): void
+    {
+        $admin = $this->adminUser();
+        $roleId = Role::query()->where('name', 'Guard')->value('id');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/users', [
+                'name' => 'Valid Password User',
+                'email' => 'validpass@example.com',
+                'password' => 'ValidPassword1!',
+                'role_id' => $roleId,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.setup_required', true);
+    }
+
+    public function test_admin_user_creation_rejects_two_factor_fields(): void
+    {
+        $admin = $this->adminUser();
+        $roleId = Role::query()->where('name', 'Guard')->value('id');
+
+        $response = $this->actingAs($admin, 'api')
+            ->postJson('/api/users', [
+                'name' => 'Two Factor User',
+                'email' => 'twofactor@example.com',
+                'password' => 'ValidPassword1!',
+                'role_id' => $roleId,
+                'two_factor_enabled' => true,
+                'two_factor_secret' => 'secret-value',
+            ])
+            ->assertStatus(422);
+
+        $errors = $response->json('data.errors');
+        $this->assertIsArray($errors);
+        $this->assertArrayHasKey('two_factor_enabled', $errors);
+        $this->assertArrayHasKey('two_factor_secret', $errors);
+    }
+
+    public function test_admin_user_update_rejects_two_factor_and_password_timestamp_fields(): void
+    {
+        $admin = $this->adminUser();
+        $target = User::factory()->create([
+            'role_id' => Role::query()->where('name', 'Guard')->value('id'),
+            'last_password_changed_at' => null,
+        ]);
+
+        $response = $this->actingAs($admin, 'api')
+            ->patchJson('/api/users/'.$target->getKey(), [
+                'two_factor_enabled' => true,
+                'two_factor_secret' => 'secret-value',
+                'last_password_changed_at' => now()->toIso8601String(),
+            ])
+            ->assertStatus(422);
+
+        $errors = $response->json('data.errors');
+        $this->assertIsArray($errors);
+        $this->assertArrayHasKey('two_factor_enabled', $errors);
+        $this->assertArrayHasKey('two_factor_secret', $errors);
+        $this->assertArrayHasKey('last_password_changed_at', $errors);
+
+        $target->refresh();
+        $this->assertFalse($target->two_factor_enabled);
+        $this->assertNull($target->two_factor_secret);
+        $this->assertNull($target->last_password_changed_at);
     }
 
     private function extractRefreshCookie($response): ?Cookie

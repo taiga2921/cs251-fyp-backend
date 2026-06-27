@@ -63,6 +63,26 @@ class PasswordSetupServiceTest extends TestCase
         $this->assertNull($this->service->findByPlainToken($first['plain_token']));
     }
 
+    public function test_only_latest_setup_token_can_complete_password_setup(): void
+    {
+        $user = User::factory()->setupRequired()->create([
+            'password' => Hash::make('TempPassword1!'),
+        ]);
+
+        $first = $this->service->createForUser($user);
+        $second = $this->service->createForUser($user);
+
+        try {
+            $this->service->completeSetup($first['plain_token'], 'NewStrongPassword1!');
+            $this->fail('Expected InvalidPasswordSetupTokenException for superseded setup token.');
+        } catch (InvalidPasswordSetupTokenException) {
+            // Expected: earlier plain token was invalidated when the latest token was created.
+        }
+
+        $updated = $this->service->completeSetup($second['plain_token'], 'NewStrongPassword1!');
+        $this->assertFalse($updated->setup_required);
+    }
+
     public function test_validate_plain_token_rejects_expired_token(): void
     {
         $user = User::factory()->setupRequired()->create();

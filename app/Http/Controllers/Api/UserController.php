@@ -41,7 +41,15 @@ class UserController extends Controller
         $validated = $request->validated();
         $user = new User;
 
-        $user->fill($validated);
+        $user->fill(collect($validated)->only([
+            'name',
+            'email',
+            'password',
+            'phone',
+            'address',
+            'profile_picture_url',
+            'profile_version',
+        ])->all());
         $user->role_id = $validated['role_id'];
         $user->email_verified_at = $validated['email_verified_at'] ?? null;
         $user->setup_required = true;
@@ -79,7 +87,15 @@ class UserController extends Controller
         $user = User::query()->withTrashed()->findOrFail($user);
         $validated = $request->validated();
 
-        $user->fill($validated);
+        $user->fill(collect($validated)->only([
+            'name',
+            'email',
+            'password',
+            'phone',
+            'address',
+            'profile_picture_url',
+            'profile_version',
+        ])->all());
 
         if (array_key_exists('role_id', $validated)) {
             $user->role_id = $validated['role_id'];

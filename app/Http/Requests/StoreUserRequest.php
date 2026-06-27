@@ -22,19 +22,22 @@ class StoreUserRequest extends FormRequest
      */
     public function rules(): array
     {
+        $minLength = (int) config('auth_security.password_min_length', 12);
+
         return [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8'],
+            'password' => ['required', 'string', 'min:'.$minLength],
             'role_id' => ['required', 'exists:roles,id'],
             'phone' => ['nullable', 'string'],
             'address' => ['nullable', 'string'],
             'profile_picture_url' => ['nullable', 'string', 'max:255'],
-            'two_factor_enabled' => ['sometimes', 'boolean'],
-            'two_factor_secret' => ['nullable', 'string'],
             'profile_version' => ['sometimes', 'integer'],
-            'last_password_changed_at' => ['nullable', 'date'],
             'email_verified_at' => ['nullable', 'date'],
+            'setup_required' => ['prohibited'],
+            'two_factor_enabled' => ['prohibited'],
+            'two_factor_secret' => ['prohibited'],
+            'last_password_changed_at' => ['prohibited'],
         ];
     }
 }

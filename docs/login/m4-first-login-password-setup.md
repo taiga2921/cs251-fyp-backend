@@ -83,13 +83,16 @@ User logs in normally (M1/M2/M3 behavior preserved)
 - Storage: SHA-256 hash only (same convention as `RefreshTokenService`)
 - TTL: `AUTH_PASSWORD_SETUP_TOKEN_TTL_HOURS` (default 24 hours)
 - Single-use: `used_at` set on completion; reuse rejected
-- Regeneration: creating a new token deletes prior unused tokens for the same user
+- Regeneration: creating a new token deletes prior unused tokens for the same user inside a **DB transaction** with user row lock (M4 hardening)
 
 ### Security rules
 
 - Setup tokens returned only after successful password verification (login) or admin create
 - Setup-required login does **not** create refresh sessions or JWT access tokens
+- **`POST /api/auth/refresh` rejects `setup_required` users** — revokes the presented refresh session, clears the cookie, returns **401** (M4 hardening)
 - `two_factor_secret` never exposed in API resources
+- General user CRUD **cannot** set `two_factor_*`, `last_password_changed_at`, or `setup_required` (prohibited in FormRequests; removed from mass assignment)
+- Admin temporary passwords must meet `AUTH_PASSWORD_MIN_LENGTH` (same as password setup completion)
 - Password setup completion does **not** issue access/refresh tokens (normal login required)
 
 ---
