@@ -31,6 +31,7 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => Hash::make('password'),
             'two_factor_enabled' => false,
+            'setup_required' => false,
             'profile_version' => 1,
         ];
     }
@@ -42,6 +43,13 @@ class UserFactory extends Factory
     {
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
+        ]);
+    }
+
+    public function setupRequired(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'setup_required' => true,
         ]);
     }
 }

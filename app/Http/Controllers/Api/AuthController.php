@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\CompletePasswordSetupRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Auth\InvalidPasswordSetupTokenException;
 use App\Services\Auth\InvalidRefreshTokenException;
+use App\Services\Auth\PasswordSetupService;
 use App\Services\Auth\RefreshTokenReuseException;
 use App\Services\Auth\RefreshTokenService;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +22,7 @@ class AuthController extends Controller
 {
     public function __construct(
         private readonly RefreshTokenService $refreshTokenService,
+        private readonly PasswordSetupService $passwordSetupService,
     ) {}
 
     /**
@@ -63,10 +67,71 @@ class AuthController extends Controller
                 ], 401);
             }
 
+            if ($user->setup_required) {
+                auth('api')->logout();
+
+                $setupSession = $this->passwordSetupService->createForUser($user);
+                $expiresAt = $setupSession['model']->expires_at;
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Account setup required.',
+                    'data' => [
+                        'next_step' => 'password_setup_required',
+                        'setup_token' => $setupSession['plain_token'],
+                        'expires_in' => $expiresAt !== null ? max(0, $expiresAt->diffInSeconds(now())) : 0,
+                        'user' => [
+                            'email' => $user->email,
+                            'setup_required' => true,
+                        ],
+                    ],
+                ], 200);
+            }
+
             $refreshSession = $this->refreshTokenService->createForUser($user, $request);
 
             return $this->buildAccessTokenResponse($user, $token)
                 ->withCookie($this->refreshTokenService->makeCookie($refreshSession['plain_token']));
+        } catch (Throwable $e) {
+            report($e);
+
+            $message = config('app.debug')
+                ? $e->getMessage()
+                : 'An unexpected error occurred.';
+
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+                'data' => null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Complete first-login password setup using a one-time setup token.
+     */
+    public function completePasswordSetup(CompletePasswordSetupRequest $request): JsonResponse
+    {
+        try {
+            $user = $this->passwordSetupService->completeSetup(
+                $request->validated('setup_token'),
+                $request->validated('password'),
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Password setup completed successfully.',
+                'data' => [
+                    'next_step' => 'two_factor_setup_required',
+                    'user' => (new UserResource($user))->resolve(),
+                ],
+            ], 200);
+        } catch (InvalidPasswordSetupTokenException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Password setup token is invalid or expired.',
+                'data' => null,
+            ], 422);
         } catch (Throwable $e) {
             report($e);
 

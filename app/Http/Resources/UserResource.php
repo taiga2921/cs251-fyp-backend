@@ -22,6 +22,8 @@ class UserResource extends JsonResource
             'address' => $this->address,
             'profile_picture_url' => $this->profile_picture_url,
             'two_factor_enabled' => $this->two_factor_enabled,
+            'setup_required' => $this->setup_required,
+            'last_password_changed_at' => $this->last_password_changed_at,
             'email_verified_at' => $this->email_verified_at,
             'role' => new RoleResource($this->whenLoaded('role')),
             'created_at' => $this->created_at,

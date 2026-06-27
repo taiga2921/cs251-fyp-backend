@@ -7,11 +7,16 @@ use App\Http\Requests\StoreUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Auth\PasswordSetupService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class UserController extends Controller
 {
+    public function __construct(
+        private readonly PasswordSetupService $passwordSetupService,
+    ) {}
+
     /**
      * Display a paginated listing of users.
      */
@@ -31,7 +36,7 @@ class UserController extends Controller
     /**
      * Store a newly created user in storage.
      */
-    public function store(StoreUserRequest $request): UserResource
+    public function store(StoreUserRequest $request): JsonResponse
     {
         $validated = $request->validated();
         $user = new User;
@@ -39,9 +44,21 @@ class UserController extends Controller
         $user->fill($validated);
         $user->role_id = $validated['role_id'];
         $user->email_verified_at = $validated['email_verified_at'] ?? null;
+        $user->setup_required = true;
         $user->save();
 
-        return new UserResource($user->load('role'));
+        $user->load('role');
+        $setupSession = $this->passwordSetupService->createForUser($user);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'User created successfully.',
+            'data' => (new UserResource($user))->resolve(),
+            'password_setup' => [
+                'token' => $setupSession['plain_token'],
+                'expires_at' => $setupSession['model']->expires_at?->toIso8601String(),
+            ],
+        ], 201);
     }
 
     /**
