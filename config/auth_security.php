@@ -7,6 +7,8 @@ return [
     'refresh_cookie_secure' => filter_var(env('AUTH_REFRESH_COOKIE_SECURE', false), FILTER_VALIDATE_BOOL),
     'refresh_cookie_same_site' => env('AUTH_REFRESH_COOKIE_SAME_SITE', 'lax'),
     'refresh_cookie_path' => env('AUTH_REFRESH_COOKIE_PATH', '/api/auth'),
+    'login_max_attempts' => (int) env('AUTH_LOGIN_MAX_ATTEMPTS', 5),
+    'login_lock_minutes' => (int) env('AUTH_LOGIN_LOCK_MINUTES', 15),
     'password_min_length' => (int) env('AUTH_PASSWORD_MIN_LENGTH', 12),
     'password_setup_token_ttl_hours' => (int) env('AUTH_PASSWORD_SETUP_TOKEN_TTL_HOURS', 24),
     'otp_challenge_ttl_minutes' => (int) env('AUTH_OTP_CHALLENGE_TTL', 5),

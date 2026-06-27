@@ -7,7 +7,9 @@ use App\Http\Requests\StoreUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Auth\AuthAuditService;
 use App\Services\Auth\PasswordSetupService;
+use App\Services\Auth\RefreshTokenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
@@ -15,6 +17,8 @@ class UserController extends Controller
 {
     public function __construct(
         private readonly PasswordSetupService $passwordSetupService,
+        private readonly RefreshTokenService $refreshTokenService,
+        private readonly AuthAuditService $authAuditService,
     ) {}
 
     /**
@@ -125,7 +129,14 @@ class UserController extends Controller
     public function destroy(string $user): JsonResponse
     {
         $user = User::query()->findOrFail($user);
+        $revokedCount = $this->refreshTokenService->revokeAllForUser($user);
         $user->delete();
+
+        $this->authAuditService->record(
+            'user_disabled_sessions_revoked',
+            user: $user,
+            metadata: ['revoked_count' => $revokedCount],
+        );
 
         return response()->json([
             'message' => 'User deleted successfully.',

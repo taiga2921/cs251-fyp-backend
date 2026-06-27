@@ -122,6 +122,14 @@ class RefreshTokenService
             ->update(['revoked_at' => now()]);
     }
 
+    public function revokeAllForUser(User $user): int
+    {
+        return RefreshToken::query()
+            ->where('user_id', $user->getKey())
+            ->whereNull('revoked_at')
+            ->update(['revoked_at' => now()]);
+    }
+
     public function makeCookie(string $plainToken): Cookie
     {
         $name = (string) config('auth_security.refresh_cookie_name');

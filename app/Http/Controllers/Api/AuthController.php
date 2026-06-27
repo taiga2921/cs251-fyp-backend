@@ -9,11 +9,14 @@ use App\Http\Requests\VerifyOtpRequest;
 use App\Http\Requests\VerifyTwoFactorSetupRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Auth\AuthAuditService;
 use App\Services\Auth\AuthLoginChallengeService;
 use App\Services\Auth\InvalidOtpChallengeException;
 use App\Services\Auth\InvalidPasswordSetupTokenException;
 use App\Services\Auth\InvalidRefreshTokenException;
 use App\Services\Auth\InvalidTwoFactorSetupTokenException;
+use App\Services\Auth\LoginRateLimitedException;
+use App\Services\Auth\LoginRateLimiter;
 use App\Services\Auth\PasswordSetupService;
 use App\Services\Auth\RefreshTokenReuseException;
 use App\Services\Auth\RefreshTokenService;
@@ -33,6 +36,8 @@ class AuthController extends Controller
         private readonly PasswordSetupService $passwordSetupService,
         private readonly TwoFactorSetupService $twoFactorSetupService,
         private readonly AuthLoginChallengeService $authLoginChallengeService,
+        private readonly LoginRateLimiter $loginRateLimiter,
+        private readonly AuthAuditService $authAuditService,
     ) {}
 
     /**
@@ -55,15 +60,37 @@ class AuthController extends Controller
             }
 
             $credentials = $validator->validated();
-            $user = User::query()->where('email', $credentials['email'])->first();
+            $email = $this->loginRateLimiter->normalizeEmail($credentials['email']);
+            $credentials['email'] = $email;
+
+            try {
+                $this->loginRateLimiter->ensureNotLocked($email, $request);
+            } catch (LoginRateLimitedException $exception) {
+                $this->authAuditService->record('login_rate_limited', $request, email: $email);
+
+                return $this->loginLockoutResponse($exception->retryAfterSeconds);
+            }
+
+            $user = User::query()->where('email', $email)->first();
 
             if ($user === null || ! Hash::check($credentials['password'], $user->password)) {
+                $justLocked = $this->loginRateLimiter->recordFailedAttempt($email, $request);
+                $this->authAuditService->record('login_failed', $request, user: $user, email: $email);
+
+                if ($justLocked) {
+                    return $this->loginLockoutResponse(
+                        $this->loginRateLimiter->availableIn($email, $request)
+                    );
+                }
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Invalid credentials.',
                     'data' => null,
                 ], 401);
             }
+
+            $this->loginRateLimiter->clear($email, $request);
 
             $user->loadMissing('role');
 
@@ -294,10 +321,14 @@ class AuthController extends Controller
 
         try {
             $validatedToken = $this->refreshTokenService->validatePlainToken($plainToken);
-            $user = $validatedToken->user()->with('role')->firstOrFail();
+            $user = User::withTrashed()->with('role')->find($validatedToken->user_id);
 
-            if ($user->setup_required || ! $user->two_factor_enabled) {
+            if ($user === null || $user->trashed() || $user->setup_required || ! $user->two_factor_enabled) {
                 $this->refreshTokenService->revokeFromPlainToken($plainToken);
+
+                if ($user !== null && $user->trashed()) {
+                    $this->authAuditService->record('refresh_blocked_disabled_user', $request, user: $user);
+                }
 
                 return $this->refreshFailureResponse($forgetCookie);
             }
@@ -395,6 +426,17 @@ class AuthController extends Controller
             'message' => 'Refresh session is invalid or expired.',
             'data' => null,
         ], 401)->withCookie($forgetCookie);
+    }
+
+    private function loginLockoutResponse(int $retryAfterSeconds): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Too many unsuccessful sign-in attempts. Please try again later.',
+            'data' => [
+                'retry_after' => $retryAfterSeconds,
+            ],
+        ], 429);
     }
 
     private function syncAccessTokenTtl(): void

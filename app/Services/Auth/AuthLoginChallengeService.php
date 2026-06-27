@@ -11,6 +11,7 @@ class AuthLoginChallengeService
 {
     public function __construct(
         private readonly TwoFactorService $twoFactorService,
+        private readonly AuthAuditService $authAuditService,
     ) {}
 
     public function createForUser(User $user, ?Request $request = null): AuthLoginChallenge
@@ -51,7 +52,9 @@ class AuthLoginChallengeService
         }
 
         if (! $this->twoFactorService->verifyForUser($user, $otp)) {
-            DB::transaction(function () use ($challengeId) {
+            $challengeLocked = false;
+
+            DB::transaction(function () use ($challengeId, &$challengeLocked) {
                 $lockedChallenge = AuthLoginChallenge::query()
                     ->whereKey($challengeId)
                     ->lockForUpdate()
@@ -63,12 +66,31 @@ class AuthLoginChallengeService
 
                 $failedAttempts = $lockedChallenge->failed_attempts + 1;
                 $maxAttempts = (int) config('auth_security.otp_max_attempts', 5);
+                $challengeLocked = $failedAttempts >= $maxAttempts;
 
                 $lockedChallenge->forceFill([
                     'failed_attempts' => $failedAttempts,
-                    'locked_at' => $failedAttempts >= $maxAttempts ? now() : null,
+                    'locked_at' => $challengeLocked ? now() : null,
                 ])->save();
             });
+
+            $this->authAuditService->record(
+                'otp_failed',
+                user: $user,
+                metadata: ['login_challenge_id' => $challengeId],
+                ipAddress: $challenge->ip_address,
+                userAgent: $challenge->user_agent,
+            );
+
+            if ($challengeLocked) {
+                $this->authAuditService->record(
+                    'otp_challenge_locked',
+                    user: $user,
+                    metadata: ['login_challenge_id' => $challengeId],
+                    ipAddress: $challenge->ip_address,
+                    userAgent: $challenge->user_agent,
+                );
+            }
 
             throw new InvalidOtpChallengeException('The authentication code is invalid or expired.');
         }
