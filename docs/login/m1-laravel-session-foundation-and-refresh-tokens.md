@@ -211,7 +211,13 @@ HTTP status: **401**. Response clears the refresh cookie.
 
 **Production:** set `AUTH_REFRESH_COOKIE_SECURE=true` on HTTPS deployments.
 
-**Laravel encryption:** `refresh_token` is listed in `bootstrap/app.php` `encryptCookies(except: …)` so the opaque value is not double-encrypted. If `AUTH_REFRESH_COOKIE_NAME` is changed from the default, update the except list to match.
+**Laravel encryption:** `bootstrap/app.php` excludes the configured refresh cookie from Laravel encryption via `env('AUTH_REFRESH_COOKIE_NAME', 'refresh_token')`, aligned with `config/auth_security.php`. Custom cookie names must stay consistent across:
+
+- `AUTH_REFRESH_COOKIE_NAME` in `.env`
+- `config/auth_security.php` → `refresh_cookie_name`
+- `bootstrap/app.php` → `encryptCookies(except: …)`
+
+**CORS testing:** Allowed-origin login responses are covered by `AuthCorsTest::test_login_from_allowed_origin_includes_credentialed_cors_headers` (asserts `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials`, refresh cookie, and login JSON shape).
 
 **Frontend:** `api.js` uses `credentials: 'include'` so browsers send the HttpOnly cookie on same-origin (or CORS-configured) API requests. Refresh-on-401 is **not** implemented until M2.
 
@@ -322,11 +328,18 @@ Post-review hardening applied to the initial M1 delivery.
 | --- | --- |
 | `AuthRefreshTokenTest` | Logout without bearer; logout with invalid bearer; logout without cookie |
 | `RefreshTokenServiceTest` | Locked rotation, reuse via `rotatePlainToken`, revoked token validation |
-| `AuthCorsTest` | CORS preflight + credentialed login |
+| `AuthCorsTest` | CORS preflight + credentialed login (`test_login_from_allowed_origin_includes_credentialed_cors_headers`) |
+| `AuthRefreshTokenTest` | Custom cookie name (`ikh_refresh_token`) login/refresh/logout |
 
-**Verification (post-patch):** `php artisan test` — **372 passed**.
+**Verification (post-patch):** `php artisan test` — **373 passed**.
 
-### 12.6 Remaining deferred work
+### 12.7 Minor cleanup patch
+
+- `bootstrap/app.php` `encryptCookies(except: …)` reads `env('AUTH_REFRESH_COOKIE_NAME', 'refresh_token')` instead of a hard-coded name.
+- `AuthRefreshTokenTest::test_custom_refresh_cookie_name_supports_login_refresh_and_logout` validates service/controller behavior with `config(['auth_security.refresh_cookie_name' => 'ikh_refresh_token'])`.
+- `AuthCorsTest::test_login_from_allowed_origin_includes_credentialed_cors_headers` asserts credentialed CORS headers on the actual login response, not only preflight.
+
+### 12.8 Remaining deferred work
 
 Unchanged from M2+: frontend refresh-on-401, session-expired UX, memory-only access token, audit logs, 2FA, rate limiting, session management UI.
 
@@ -343,7 +356,7 @@ Unchanged from M2+: frontend refresh-on-401, session-expired UX, memory-only acc
 | No rate limiting on login/refresh | M3 |
 | No 2FA or first-login setup | M4–M5 |
 | No disabled-user refresh invalidation beyond soft-delete | M6 |
-| Custom `AUTH_REFRESH_COOKIE_NAME` requires matching `encryptCookies` except entry | Document / future middleware hardening |
+| Custom `AUTH_REFRESH_COOKIE_NAME` | Must match `bootstrap/app.php` encryption exception (uses same env var) |
 
 **Critical sequencing:** M2 (frontend refresh client) must ship before mandatory 2FA (M5) so patrol/PWA sync survives short access-token expiry.
 

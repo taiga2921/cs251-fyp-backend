@@ -37,18 +37,32 @@ class AuthCorsTest extends TestCase
         $response->assertHeader('Access-Control-Allow-Credentials', 'true');
     }
 
-    public function test_login_from_allowed_origin_sets_refresh_cookie(): void
+    public function test_login_from_allowed_origin_includes_credentialed_cors_headers(): void
     {
         $user = $this->guardUser();
+        $origin = 'http://localhost:5173';
 
-        $response = $this->withHeader('Origin', 'http://localhost:5173')
+        $response = $this->withHeader('Origin', $origin)
             ->postJson('/api/auth/login', [
                 'email' => $user->email,
                 'password' => 'password',
             ]);
 
         $response->assertOk()
-            ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:5173')
+            ->assertHeader('Access-Control-Allow-Origin', $origin)
+            ->assertHeader('Access-Control-Allow-Credentials', 'true')
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure([
+                'data' => [
+                    'access_token',
+                    'token_type',
+                    'expires_in',
+                    'user' => ['id', 'email'],
+                    'role',
+                ],
+            ])
             ->assertCookie('refresh_token');
+
+        $this->assertArrayNotHasKey('refresh_token', $response->json('data'));
     }
 }

@@ -106,7 +106,7 @@ class AuthRefreshTokenTest extends TestCase
 
         Carbon::setTestNow('2026-06-28 10:00:00');
 
-        $this->withUnencryptedCookie('refresh_token', $created['plain_token'])
+        $this->withUnencryptedCookie($this->refreshCookieName(), $created['plain_token'])
             ->withCredentials()
             ->postJson('/api/auth/refresh')
             ->assertUnauthorized()
@@ -120,7 +120,7 @@ class AuthRefreshTokenTest extends TestCase
         $created = app(\App\Services\Auth\RefreshTokenService::class)->createForUser($this->guardUser());
         $created['model']->revoke();
 
-        $this->withUnencryptedCookie('refresh_token', $created['plain_token'])
+        $this->withUnencryptedCookie($this->refreshCookieName(), $created['plain_token'])
             ->withCredentials()
             ->postJson('/api/auth/refresh')
             ->assertUnauthorized();
@@ -276,12 +276,49 @@ class AuthRefreshTokenTest extends TestCase
         $this->assertDatabaseCount('refresh_tokens', 0);
     }
 
+    public function test_custom_refresh_cookie_name_supports_login_refresh_and_logout(): void
+    {
+        config(['auth_security.refresh_cookie_name' => 'ikh_refresh_token']);
+
+        $user = $this->guardUser();
+
+        $loginResponse = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $loginResponse->assertOk()
+            ->assertCookie('ikh_refresh_token');
+
+        $this->assertArrayNotHasKey('ikh_refresh_token', $loginResponse->json('data'));
+        $this->assertArrayNotHasKey('refresh_token', $loginResponse->json('data'));
+
+        $cookie = $this->extractRefreshCookie($loginResponse);
+
+        $this->withUnencryptedCookie($cookie->getName(), $cookie->getValue())
+            ->withCredentials()
+            ->postJson('/api/auth/refresh')
+            ->assertOk()
+            ->assertCookie('ikh_refresh_token');
+
+        $this->withUnencryptedCookie($cookie->getName(), $cookie->getValue())
+            ->withCredentials()
+            ->postJson('/api/auth/logout')
+            ->assertOk()
+            ->assertCookieExpired('ikh_refresh_token');
+    }
+
+    private function refreshCookieName(): string
+    {
+        return (string) config('auth_security.refresh_cookie_name', 'refresh_token');
+    }
+
     /**
      * @param  \Illuminate\Testing\TestResponse  $response
      */
     private function extractRefreshCookie($response): Cookie
     {
-        $cookie = $response->getCookie('refresh_token', decrypt: false);
+        $cookie = $response->getCookie($this->refreshCookieName(), decrypt: false);
         $this->assertNotNull($cookie);
 
         return $cookie;

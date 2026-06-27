@@ -1122,7 +1122,7 @@ The `anpr_event_logs` module is implemented and wired:
 5. Admin-only routes are wrapped with `Route::middleware('admin')`; non-admin users receive **403 Forbidden** JSON.
 6. `POST /api/auth/logout` always clears the refresh cookie and revokes the matching DB refresh row when present; invalidates the JWT only when a valid bearer token is supplied. `GET /api/auth/me` returns the authenticated profile and role.
 7. Access-token TTL on login/refresh uses `AUTH_ACCESS_TOKEN_TTL` via `config/auth_security.php` (minutes; default **30**). `expires_in` in responses is **seconds** (`getTTL() * 60`). Refresh session TTL: `AUTH_REFRESH_TOKEN_TTL_HOURS` (default **12** hours).
-8. **Browser credentialed CORS:** `config/cors.php` sets `supports_credentials: true` and explicit `CORS_ALLOWED_ORIGINS` (no `*`). Required when React (e.g. `localhost:5173`) and Laravel (`localhost:8000`) run on different origins.
+8. **Browser credentialed CORS:** `config/cors.php` sets `supports_credentials: true` and explicit `CORS_ALLOWED_ORIGINS` (no `*`). Required when React (e.g. `localhost:5173`) and Laravel (`localhost:8000`) run on different origins. **Refresh cookie name:** `AUTH_REFRESH_COOKIE_NAME` must match across `.env`, `config/auth_security.php`, and `bootstrap/app.php` (`encryptCookies` except uses the same env variable).
 
 ### Authorization beyond JWT
 

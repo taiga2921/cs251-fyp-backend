@@ -27,7 +27,7 @@ return Application::configure(basePath: dirname(__DIR__))
             HandleCors::class,
         ]);
         $middleware->encryptCookies(except: [
-            'refresh_token',
+            env('AUTH_REFRESH_COOKIE_NAME', 'refresh_token'),
         ]);
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
