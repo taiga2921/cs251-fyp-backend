@@ -1105,6 +1105,8 @@ The `anpr_event_logs` module is implemented and wired:
 
 **Login Module M2 (frontend refresh-on-401):** React API client refresh queue, single retry, and session-expired UX are documented in [`docs/login/m2-frontend-refresh-on-401-architecture.md`](docs/login/m2-frontend-refresh-on-401-architecture.md). No backend runtime changes in M2.
 
+**Login Module M3 (patrol token expiry safety):** PWA `flushSyncQueue()` continuity via shared `api.js` refresh-on-401 is documented in [`docs/login/m3-patrol-token-expiry-safety.md`](docs/login/m3-patrol-token-expiry-safety.md). Verification tests only; no backend runtime changes in M3.
+
 ### Authentication method
 
 - **JWT** using `**php-open-source-saver/jwt-auth`\*\*.
@@ -1390,6 +1392,7 @@ php artisan test
 | File                            | Verifies                                                                                                                                                                                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PwaSyncTest.php`               | JWT sync of `location_log`; 401 unauthenticated; duplicate replay (`duplicate: true`); 409 payload conflict; 422 invalid lat/lng, invalid `patrolId`, and invalid `source` (e.g. `manual`); `sync` source accepted; `server_received_at` set                                        |
+| `PatrolTokenExpiryTest.php`     | **M3:** Unauthenticated `/api/pwa/sync` 401; refresh cookie restores access; retry sync creates `LocationLog`; expired refresh session cannot restore sync |
 | `PatrolValidationTest.php`      | Continuous dwell ≥ 3s → verified (≥ 80); short stay → rejected/uncertain; resume → uncertain (≤ 79); gap reduces `gap_factor`; `speed_anomaly` / `gps_jump` / `poor_accuracy` in `anomalies.items`; metrics upsert; re-validation updates same event; HTTP validate envelope + auth |
 | `PatrolSummaryTest.php`         | Checkpoint counts, `completion_percentage`, gaps > 30s, confidence penalties (pending/rejected/suspicious), empty logs, summary auth + JSON envelope                                                                                                                                |
 | `CheckpointEventMetricTest.php` | Create metric; unique `checkpoint_event_id`; `calculated_confidence_score` in resource; cascade delete with checkpoint event                                                                                                                                                        |
