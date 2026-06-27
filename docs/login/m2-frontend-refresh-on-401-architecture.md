@@ -271,6 +271,7 @@ M2 passes when:
 - Access token still mirrored to `localStorage` for route-guard compatibility
 - No cross-tab refresh coordination beyond existing `storage` event on logout
 - No dedicated `/session-expired` route (dialog + redirect to `/login` used instead)
+- Minor circular-import coupling (`api.js` → `authRefreshQueue.js` → `authService.js` → `api.js` for logout); `authService.refresh()` uses direct `fetch` to avoid refresh recursion — consolidation deferred with AuthContext migration
 - Full AuthContext, OTP, audit logs, session UI, and rate limiting remain future milestones
 
 ---
