@@ -26,6 +26,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->use([
             HandleCors::class,
         ]);
+        $middleware->encryptCookies(except: [
+            'refresh_token',
+        ]);
         $middleware->alias([
             'admin' => EnsureUserIsAdmin::class,
             'patrol.monitoring' => EnsureUserCanAccessPatrolMonitoring::class,

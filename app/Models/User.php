@@ -94,6 +94,11 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(BlockchainVerification::class, 'verified_by');
     }
 
+    public function refreshTokens(): HasMany
+    {
+        return $this->hasMany(RefreshToken::class);
+    }
+
     public function getJWTIdentifier(): mixed
     {
         return $this->getKey();
