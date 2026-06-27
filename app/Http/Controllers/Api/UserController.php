@@ -11,6 +11,7 @@ use App\Services\Auth\AuthAuditService;
 use App\Services\Auth\PasswordSetupService;
 use App\Services\Auth\RefreshTokenService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class UserController extends Controller
@@ -126,17 +127,24 @@ class UserController extends Controller
     /**
      * Soft delete the specified user.
      */
-    public function destroy(string $user): JsonResponse
+    public function destroy(Request $request, string $user): JsonResponse
     {
         $user = User::query()->findOrFail($user);
+        $admin = $request->user('api');
         $revokedCount = $this->refreshTokenService->revokeAllForUser($user);
         $user->delete();
 
         $this->authAuditService->record(
             AuthAuditService::EVENT_USER_DISABLED_SESSIONS_REVOKED,
             AuthAuditService::STATUS_REVOKED,
+            $request,
             user: $user,
-            metadata: ['revoked_count' => $revokedCount],
+            metadata: [
+                'disabled_user_id' => $user->getKey(),
+                'disabled_user_email' => $user->email,
+                'disabled_by_user_id' => $admin?->getKey(),
+                'revoked_count' => $revokedCount,
+            ],
         );
 
         return response()->json([

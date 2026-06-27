@@ -168,6 +168,112 @@ class AuthAuditLogTest extends TestCase
         $this->assertStringNotContainsString('123456', json_encode($log->metadata));
     }
 
+    public function test_audit_metadata_redacts_nested_sensitive_keys_and_generic_code(): void
+    {
+        $auditService = app(AuthAuditService::class);
+
+        $log = $auditService->record(
+            AuthAuditService::EVENT_OTP_FAILURE,
+            AuthAuditService::STATUS_FAILURE,
+            metadata: [
+                'session_id' => 'session-1',
+                'reason' => 'invalid_attempt',
+                'revoked_count' => 2,
+                'code' => '123456',
+                'details' => [
+                    'otp_code' => '654321',
+                    'nested' => ['refresh_token' => 'raw-token-value'],
+                ],
+            ],
+        );
+
+        $this->assertSame([
+            'session_id' => 'session-1',
+            'reason' => 'invalid_attempt',
+            'revoked_count' => 2,
+        ], $log->metadata);
+    }
+
+    public function test_audit_metadata_redacts_authorization_like_values(): void
+    {
+        $auditService = app(AuthAuditService::class);
+
+        $log = $auditService->record(
+            AuthAuditService::EVENT_REFRESH_FAILURE,
+            AuthAuditService::STATUS_FAILURE,
+            metadata: [
+                'note' => 'retry',
+                'authorization' => 'Bearer secret.jwt.token',
+                'header' => 'Bearer another-token',
+            ],
+        );
+
+        $this->assertSame(['note' => 'retry'], $log->metadata);
+    }
+
+    public function test_two_factor_setup_started_includes_request_ip_and_user_agent(): void
+    {
+        $this->seed(\Database\Seeders\RoleSeeder::class);
+
+        $admin = $this->adminUser();
+        $roleId = \App\Models\Role::query()->where('name', 'Guard')->value('id');
+
+        $this->actingAs($admin, 'api')
+            ->postJson('/api/users', [
+                'name' => 'Audit Guard',
+                'email' => 'auditguard@example.com',
+                'password' => 'TempPassword1!',
+                'role_id' => $roleId,
+            ])
+            ->assertCreated();
+
+        $setupToken = $this->postJson('/api/auth/login', [
+            'email' => 'auditguard@example.com',
+            'password' => 'TempPassword1!',
+        ])->json('data.setup_token');
+
+        $this->postJson('/api/auth/password-setup/complete', [
+            'setup_token' => $setupToken,
+            'password' => 'NewStrongPassword1!',
+            'password_confirmation' => 'NewStrongPassword1!',
+        ])->assertOk();
+
+        $twoFactorToken = $this->postJson('/api/auth/login', [
+            'email' => 'auditguard@example.com',
+            'password' => 'NewStrongPassword1!',
+        ])->json('data.two_factor_setup_token');
+
+        $this->postJson('/api/auth/2fa/setup/start', [
+            'two_factor_setup_token' => $twoFactorToken,
+        ], ['REMOTE_ADDR' => '203.0.113.50', 'HTTP_USER_AGENT' => 'M7AuditTestAgent/1.0'])
+            ->assertOk();
+
+        $this->assertDatabaseHas('auth_audit_logs', [
+            'event_type' => AuthAuditService::EVENT_TWO_FACTOR_SETUP_STARTED,
+            'ip_address' => '203.0.113.50',
+            'user_agent' => 'M7AuditTestAgent/1.0',
+        ]);
+    }
+
+    public function test_user_disabled_sessions_revoked_includes_admin_request_context(): void
+    {
+        $admin = $this->adminUser();
+        $target = $this->enableTwoFactor($this->guardUser());
+
+        $this->actingAs($admin, 'api')
+            ->deleteJson('/api/users/'.$target->getKey(), [], [
+                'REMOTE_ADDR' => '203.0.113.60',
+                'HTTP_USER_AGENT' => 'AdminDisableTest/1.0',
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('auth_audit_logs', [
+            'event_type' => AuthAuditService::EVENT_USER_DISABLED_SESSIONS_REVOKED,
+            'ip_address' => '203.0.113.60',
+            'user_agent' => 'AdminDisableTest/1.0',
+        ]);
+    }
+
     public function test_admin_can_list_audit_logs(): void
     {
         $admin = $this->adminUser();

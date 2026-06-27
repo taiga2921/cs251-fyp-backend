@@ -146,9 +146,14 @@ Response: Laravel paginated `AuthAuditLogResource` collection with `action`, `st
 
 ## Security and privacy rules
 
-Audit metadata is sanitized before persistence. Forbidden keys/values include passwords, OTP, raw/hashed tokens, setup tokens, TOTP secrets, Authorization headers, and long hex strings resembling token material.
+Audit metadata is sanitized before persistence. Forbidden keys/values include passwords, OTP/code fields (including nested `code`, `otp_code`, `auth_code`, and similar keys), raw/hashed tokens, setup tokens, TOTP secrets, Authorization headers, and long hex strings resembling token material. Harmless metadata such as `session_id`, `reason`, `revoked_count`, and user identifiers is retained.
 
 HttpOnly refresh cookie behavior, rotation, M2 refresh-on-401, M5 OTP challenges, and M6 rate limiting remain unchanged.
+
+### M7 hardening follow-up
+
+* `two_factor_setup_started` and `user_disabled_sessions_revoked` record request IP address and user agent when triggered through the API.
+* Metadata sanitization recursively redacts nested sensitive keys and generic OTP/code-like keys.
 
 ---
 
@@ -232,6 +237,5 @@ yarn build
 ## Known limitations / deferred work
 
 - No audit log export or alerting (future reporting)
-- `two_factor_setup_started` may omit request IP when called from public setup endpoint without passing `Request`
 - Admin cannot `logout-all` for another user via API (by design unless extended in M9)
-- Session list includes rotated/revoked rows for investigation; filter UI deferred
+- Session tab lists rotated/revoked rows for investigation; active-only filter UI deferred

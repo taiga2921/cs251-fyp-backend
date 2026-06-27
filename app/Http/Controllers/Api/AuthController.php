@@ -244,7 +244,8 @@ class AuthController extends Controller
     {
         try {
             $started = $this->twoFactorSetupService->startSetup(
-                $request->validated('two_factor_setup_token')
+                $request->validated('two_factor_setup_token'),
+                $request,
             );
 
             return response()->json([

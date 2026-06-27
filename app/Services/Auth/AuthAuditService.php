@@ -51,21 +51,32 @@ class AuthAuditService
     public const EVENT_USER_DISABLED_SESSIONS_REVOKED = 'user_disabled_sessions_revoked';
 
     /** @var list<string> */
-    private const SENSITIVE_METADATA_KEYS = [
-        'password',
-        'otp',
-        'token',
-        'setup_token',
-        'two_factor_setup_token',
-        'manual_key',
-        'otpauth_uri',
-        'access_token',
-        'refresh_token',
-        'token_hash',
+    private const EXACT_SENSITIVE_KEYS = [
         'authorization',
+        'code',
         'cookie',
+        'otp',
+        'password',
         'secret',
+        'totp',
+    ];
+
+    /** @var list<string> */
+    private const SUBSTRING_SENSITIVE_KEYS = [
+        'access_token',
+        'auth_code',
+        'manual_key',
+        'one_time_code',
+        'otp_code',
+        'otpauth',
+        'password_confirmation',
+        'refresh_token',
+        'setup_token',
+        'token_hash',
+        'totp_code',
         'two_factor_secret',
+        'two_factor_setup_token',
+        'token',
     ];
 
     /**
@@ -133,7 +144,11 @@ class AuthAuditService
 
     private function isSensitiveMetadataKey(string $key): bool
     {
-        foreach (self::SENSITIVE_METADATA_KEYS as $forbidden) {
+        if (in_array($key, self::EXACT_SENSITIVE_KEYS, true)) {
+            return true;
+        }
+
+        foreach (self::SUBSTRING_SENSITIVE_KEYS as $forbidden) {
             if ($key === $forbidden || str_contains($key, $forbidden)) {
                 return true;
             }

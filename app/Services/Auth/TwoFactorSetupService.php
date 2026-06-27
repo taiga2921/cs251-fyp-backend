@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\Models\TwoFactorSetupSession;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TwoFactorSetupService
@@ -50,9 +51,9 @@ class TwoFactorSetupService
      *
      * @throws InvalidTwoFactorSetupTokenException
      */
-    public function startSetup(string $plainToken): array
+    public function startSetup(string $plainToken, ?Request $request = null): array
     {
-        return DB::transaction(function () use ($plainToken) {
+        return DB::transaction(function () use ($plainToken, $request) {
             $session = $this->lockActiveSession($plainToken);
             $user = User::query()->lockForUpdate()->findOrFail($session->user_id);
 
@@ -68,6 +69,7 @@ class TwoFactorSetupService
             $this->authAuditService->record(
                 AuthAuditService::EVENT_TWO_FACTOR_SETUP_STARTED,
                 AuthAuditService::STATUS_SUCCESS,
+                $request,
                 user: $user,
             );
 
