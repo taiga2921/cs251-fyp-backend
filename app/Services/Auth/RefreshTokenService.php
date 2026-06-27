@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\RefreshToken;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Cookie;
 
@@ -41,47 +42,7 @@ class RefreshTokenService
             throw new InvalidRefreshTokenException('Refresh token not found.');
         }
 
-        if ($token->isRotated()) {
-            $this->revokeFamily($token->token_family);
-
-            throw new RefreshTokenReuseException('Rotated refresh token reuse detected.');
-        }
-
-        if ($token->isRevoked() || $token->isExpired()) {
-            throw new InvalidRefreshTokenException('Refresh token is no longer valid.');
-        }
-
-        return $token;
-    }
-
-    /**
-     * @return array{model: RefreshToken, plain_token: string}
-     *
-     * @throws InvalidRefreshTokenException
-     * @throws RefreshTokenReuseException
-     */
-    public function rotate(RefreshToken $current, ?Request $request = null): array
-    {
-        if ($current->isRotated()) {
-            $this->revokeFamily($current->token_family);
-
-            throw new RefreshTokenReuseException('Rotated refresh token reuse detected.');
-        }
-
-        if ($current->isRevoked() || $current->isExpired()) {
-            throw new InvalidRefreshTokenException('Refresh token is no longer valid.');
-        }
-
-        $current->forceFill([
-            'rotated_at' => now(),
-            'last_used_at' => now(),
-        ])->save();
-
-        return $this->createTokenForUser(
-            $current->user()->firstOrFail(),
-            $request,
-            $current->token_family
-        );
+        return $this->assertTokenUsable($token);
     }
 
     /**
@@ -92,7 +53,60 @@ class RefreshTokenService
      */
     public function rotatePlainToken(string $plainToken, ?Request $request = null): array
     {
-        return $this->rotate($this->validatePlainToken($plainToken), $request);
+        $tokenHash = $this->hashPlainToken($plainToken);
+
+        try {
+            return DB::transaction(function () use ($tokenHash, $request) {
+                $token = RefreshToken::query()
+                    ->where('token_hash', $tokenHash)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($token === null) {
+                    throw new InvalidRefreshTokenException('Refresh token not found.');
+                }
+
+                if ($token->rotated_at !== null) {
+                    throw new RefreshTokenReuseException('Rotated refresh token reuse detected.');
+                }
+
+                if ($token->revoked_at !== null || $token->expires_at->isPast()) {
+                    throw new InvalidRefreshTokenException('Refresh token is no longer valid.');
+                }
+
+                $token->forceFill([
+                    'rotated_at' => now(),
+                    'last_used_at' => now(),
+                ])->save();
+
+                return $this->createTokenForUser(
+                    $token->user()->firstOrFail(),
+                    $request,
+                    $token->token_family
+                );
+            });
+        } catch (RefreshTokenReuseException $exception) {
+            $token = RefreshToken::query()->where('token_hash', $tokenHash)->first();
+
+            if ($token !== null) {
+                $this->revokeFamily($token->token_family);
+            }
+
+            throw $exception;
+        }
+    }
+
+    public function revokeFromPlainToken(?string $plainToken): void
+    {
+        if ($plainToken === null || $plainToken === '') {
+            return;
+        }
+
+        $token = $this->findByPlainToken($plainToken);
+
+        if ($token !== null && ! $token->isRevoked()) {
+            $token->revoke();
+        }
     }
 
     public function revoke(RefreshToken $token): void
@@ -148,6 +162,25 @@ class RefreshTokenService
     }
 
     /**
+     * @throws InvalidRefreshTokenException
+     * @throws RefreshTokenReuseException
+     */
+    private function assertTokenUsable(RefreshToken $token): RefreshToken
+    {
+        if ($token->isRotated()) {
+            $this->revokeFamily($token->token_family);
+
+            throw new RefreshTokenReuseException('Rotated refresh token reuse detected.');
+        }
+
+        if ($token->isRevoked() || $token->isExpired()) {
+            throw new InvalidRefreshTokenException('Refresh token is no longer valid.');
+        }
+
+        return $token;
+    }
+
+    /**
      * @return array{model: RefreshToken, plain_token: string}
      */
     private function createTokenForUser(User $user, ?Request $request, string $tokenFamily): array
@@ -185,5 +218,4 @@ class RefreshTokenService
             default => Cookie::SAMESITE_LAX,
         };
     }
-
 }

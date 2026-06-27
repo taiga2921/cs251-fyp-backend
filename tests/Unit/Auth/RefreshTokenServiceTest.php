@@ -3,7 +3,6 @@
 namespace Tests\Unit\Auth;
 
 use App\Models\RefreshToken;
-use App\Models\User;
 use App\Services\Auth\InvalidRefreshTokenException;
 use App\Services\Auth\RefreshTokenReuseException;
 use App\Services\Auth\RefreshTokenService;
@@ -90,45 +89,80 @@ class RefreshTokenServiceTest extends TestCase
         $this->service->validatePlainToken('expired-token');
     }
 
+    public function test_validate_plain_token_rejects_revoked_token(): void
+    {
+        RefreshToken::factory()->revoked()->create([
+            'token_hash' => hash('sha256', 'revoked-token'),
+        ]);
+
+        $this->expectException(InvalidRefreshTokenException::class);
+        $this->service->validatePlainToken('revoked-token');
+    }
+
     public function test_rotated_token_reuse_revokes_token_family(): void
     {
         $user = $this->guardUser();
         $created = $this->service->createForUser($user);
         $family = $created['model']->token_family;
+        $plainToken = $created['plain_token'];
 
-        $this->service->rotate($created['model']);
+        $this->service->rotatePlainToken($plainToken);
 
         $this->expectException(RefreshTokenReuseException::class);
         try {
-            $this->service->validatePlainToken($created['plain_token']);
+            $this->service->validatePlainToken($plainToken);
         } finally {
             $this->assertSame(
-                2,
+                RefreshToken::query()->where('token_family', $family)->count(),
                 RefreshToken::query()->where('token_family', $family)->whereNotNull('revoked_at')->count()
             );
         }
     }
 
-    public function test_rotate_issues_new_token_in_same_family_and_marks_old_token_rotated(): void
+    public function test_rotate_plain_token_marks_old_token_rotated_and_creates_one_successor(): void
     {
         $created = $this->service->createForUser($this->guardUser());
         $family = $created['model']->token_family;
+        $originalId = $created['model']->id;
 
-        $rotated = $this->service->rotate($created['model']);
+        $rotated = $this->service->rotatePlainToken($created['plain_token']);
 
         $created['model']->refresh();
 
         $this->assertNotNull($created['model']->rotated_at);
         $this->assertSame($family, $rotated['model']->token_family);
-        $this->assertNotSame($created['model']->id, $rotated['model']->id);
+        $this->assertNotSame($originalId, $rotated['model']->id);
         $this->assertTrue($rotated['model']->isActive());
+        $this->assertSame(
+            1,
+            RefreshToken::query()->where('token_family', $family)->active()->count()
+        );
     }
 
-    public function test_revoke_marks_token_revoked(): void
+    public function test_reusing_rotated_plain_token_through_rotate_plain_token_revokes_family(): void
+    {
+        $created = $this->service->createForUser($this->guardUser());
+        $family = $created['model']->token_family;
+        $plainToken = $created['plain_token'];
+
+        $this->service->rotatePlainToken($plainToken);
+
+        $this->expectException(RefreshTokenReuseException::class);
+        try {
+            $this->service->rotatePlainToken($plainToken);
+        } finally {
+            $this->assertSame(
+                RefreshToken::query()->where('token_family', $family)->count(),
+                RefreshToken::query()->where('token_family', $family)->whereNotNull('revoked_at')->count()
+            );
+        }
+    }
+
+    public function test_revoke_from_plain_token_marks_token_revoked(): void
     {
         $created = $this->service->createForUser($this->guardUser());
 
-        $this->service->revoke($created['model']);
+        $this->service->revokeFromPlainToken($created['plain_token']);
 
         $created['model']->refresh();
         $this->assertTrue($created['model']->isRevoked());

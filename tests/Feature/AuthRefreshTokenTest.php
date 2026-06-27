@@ -175,9 +175,67 @@ class AuthRefreshTokenTest extends TestCase
             ->postJson('/api/auth/logout');
 
         $logoutResponse->assertOk()
+            ->assertJsonPath('message', 'Logout successful.')
             ->assertCookieExpired('refresh_token');
 
         $this->assertNotNull(RefreshToken::query()->find($refreshTokenId)?->revoked_at);
+    }
+
+    public function test_logout_revokes_refresh_session_without_bearer_token(): void
+    {
+        $user = $this->guardUser();
+
+        $loginResponse = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $refreshCookie = $this->extractRefreshCookie($loginResponse);
+        $refreshTokenId = RefreshToken::query()->value('id');
+
+        $this->withUnencryptedCookies([
+            $refreshCookie->getName() => $refreshCookie->getValue(),
+        ])
+            ->withCredentials()
+            ->postJson('/api/auth/logout')
+            ->assertOk()
+            ->assertJsonPath('message', 'Logout successful.')
+            ->assertCookieExpired('refresh_token');
+
+        $this->assertNotNull(RefreshToken::query()->find($refreshTokenId)?->revoked_at);
+    }
+
+    public function test_logout_revokes_refresh_session_when_bearer_token_is_expired_or_invalid(): void
+    {
+        $user = $this->guardUser();
+
+        $loginResponse = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $refreshCookie = $this->extractRefreshCookie($loginResponse);
+        $refreshTokenId = RefreshToken::query()->value('id');
+
+        $this->withUnencryptedCookies([
+            $refreshCookie->getName() => $refreshCookie->getValue(),
+        ])
+            ->withCredentials()
+            ->withHeader('Authorization', 'Bearer invalid.jwt.token')
+            ->postJson('/api/auth/logout')
+            ->assertOk()
+            ->assertJsonPath('message', 'Logout successful.')
+            ->assertCookieExpired('refresh_token');
+
+        $this->assertNotNull(RefreshToken::query()->find($refreshTokenId)?->revoked_at);
+    }
+
+    public function test_logout_without_refresh_cookie_is_tolerant(): void
+    {
+        $this->postJson('/api/auth/logout')
+            ->assertOk()
+            ->assertJsonPath('message', 'Logout successful.')
+            ->assertCookieExpired('refresh_token');
     }
 
     public function test_refresh_after_logout_fails_with_unauthorized(): void
@@ -189,14 +247,12 @@ class AuthRefreshTokenTest extends TestCase
             'password' => 'password',
         ]);
 
-        $accessToken = $loginResponse->json('data.access_token');
         $refreshCookie = $this->extractRefreshCookie($loginResponse);
 
         $this->withUnencryptedCookies([
             $refreshCookie->getName() => $refreshCookie->getValue(),
         ])
             ->withCredentials()
-            ->withHeader('Authorization', 'Bearer '.$accessToken)
             ->postJson('/api/auth/logout')
             ->assertOk();
 

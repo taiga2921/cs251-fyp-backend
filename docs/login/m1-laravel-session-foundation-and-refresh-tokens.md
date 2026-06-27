@@ -158,13 +158,13 @@ Revoke refresh row + blacklist JWT + clear cookie
 | --- | --- | --- | --- |
 | `POST` | `/api/auth/login` | None | Email/password → JWT JSON + refresh cookie |
 | `POST` | `/api/auth/refresh` | Refresh cookie | Rotate session → JWT JSON + new cookie |
+| `POST` | `/api/auth/logout` | None (refresh cookie optional; bearer optional) | Revoke refresh session + clear cookie; invalidate JWT when bearer present |
 
 ### Protected endpoints (unchanged guard)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/auth/me` | Current user |
-| `POST` | `/api/auth/logout` | Revoke refresh + invalidate JWT + clear cookie |
 
 ### Login / refresh success response (unchanged shape)
 
@@ -259,14 +259,80 @@ curl -c cookies.txt -X POST http://localhost:8000/api/auth/login \
 # Refresh
 curl -b cookies.txt -c cookies.txt -X POST http://localhost:8000/api/auth/refresh
 
-# Logout (use access_token from login JSON)
+# Logout (Bearer optional; refresh cookie revoked when present)
 curl -b cookies.txt -X POST http://localhost:8000/api/auth/logout \
   -H "Authorization: Bearer <access_token>"
 ```
 
 ---
 
-## 12. Known Limitations and Deferred Work (M2+)
+## 12. M1 Hardening Patch
+
+Post-review hardening applied to the initial M1 delivery.
+
+### 12.1 Public logout with refresh revocation
+
+**Problem:** When `POST /api/auth/logout` was behind `auth:api`, an expired JWT prevented the controller from running, leaving a valid HttpOnly refresh cookie in the browser.
+
+**Patch:**
+
+- `POST /api/auth/logout` moved **outside** the `auth:api` group (public route, alongside login/refresh).
+- `AuthController@logout` always:
+  1. Revokes the matching `refresh_tokens` row from the cookie (when present and not already revoked).
+  2. Clears the configured refresh cookie.
+  3. Attempts JWT blacklist **only** when `Authorization: Bearer` is present; tolerates `JWTException`.
+  4. Returns **200** `{ success: true, message: 'Logout successful.', data: null }`.
+
+`GET /api/auth/me` remains protected.
+
+### 12.2 Credentialed CORS
+
+**Problem:** `credentials: 'include'` in the React client requires explicit CORS origins; wildcard `*` is incompatible with credentialed cookies.
+
+**Patch:**
+
+- Added `config/cors.php` with `supports_credentials: true` and `CORS_ALLOWED_ORIGINS`.
+- Updated `.env.example` with `CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`.
+- Tests: `tests/Feature/AuthCorsTest.php` (preflight + login cookie from allowed origin).
+
+### 12.3 Transaction-safe refresh rotation
+
+**Problem:** Concurrent refresh requests could race without row locking; family revocation on reuse must persist even when the rotation transaction rolls back.
+
+**Patch:**
+
+- `RefreshTokenService::rotatePlainToken()` uses `DB::transaction()` with `lockForUpdate()` on the token row.
+- Reuse detection throws inside the transaction; `revokeFamily()` runs **after** rollback in the `catch` block so family revocation commits.
+- `AuthController@refresh` calls `rotatePlainToken()` only (single locked path).
+
+### 12.4 Manual browser cookie smoke test
+
+1. Start Laravel API (`php artisan serve`).
+2. Start React Vite frontend from an allowed origin (e.g. `http://localhost:5173`).
+3. Ensure `CORS_ALLOWED_ORIGINS` includes the Vite origin.
+4. Login from the React login page.
+5. DevTools → Application → Cookies: confirm HttpOnly `refresh_token` for the API host/path `/api/auth`.
+6. Confirm `POST /api/auth/refresh` sends the cookie (Network tab → request cookies).
+7. Confirm refresh returns a new `access_token` and rotates the cookie.
+8. Let the access token expire (or clear `localStorage` only), then logout from Profile — confirm cookie is cleared and refresh returns **401**.
+
+### 12.5 Tests added/updated (hardening)
+
+| File | New/updated cases |
+| --- | --- |
+| `AuthRefreshTokenTest` | Logout without bearer; logout with invalid bearer; logout without cookie |
+| `RefreshTokenServiceTest` | Locked rotation, reuse via `rotatePlainToken`, revoked token validation |
+| `AuthCorsTest` | CORS preflight + credentialed login |
+
+**Verification (post-patch):** `php artisan test` — **372 passed**.
+
+### 12.6 Remaining deferred work
+
+Unchanged from M2+: frontend refresh-on-401, session-expired UX, memory-only access token, audit logs, 2FA, rate limiting, session management UI.
+
+---
+
+## 13. Known Limitations and Deferred Work (M2+)
 
 | Limitation | Planned milestone |
 | --- | --- |
@@ -283,7 +349,7 @@ curl -b cookies.txt -X POST http://localhost:8000/api/auth/logout \
 
 ---
 
-## 13. Passing Criteria
+## 14. Passing Criteria
 
 - [x] `refresh_tokens` migration runs on SQLite and MySQL-compatible schema
 - [x] Raw refresh token never stored in DB or JSON
@@ -292,13 +358,17 @@ curl -b cookies.txt -X POST http://localhost:8000/api/auth/logout \
 - [x] Logout revokes refresh session and clears cookie
 - [x] Rotated-token reuse revokes token family
 - [x] Unit and feature tests pass
-- [x] Full backend suite passes (365 tests)
+- [x] Full backend suite passes (372 tests after hardening patch)
 - [x] No OTP, audit logs, or frontend refresh-on-401 in M1
 - [x] M1 documentation committed
 
 ---
 
-## 14. M1 Conclusion
+- [x] Logout revokes refresh session without valid JWT (hardening patch)
+- [x] Credentialed CORS configured
+- [x] Refresh rotation uses transaction + row lock
+
+## 15. M1 Conclusion
 
 M1 establishes the **server-side refresh session foundation** required for shift-length patrol continuity and future login hardening. The API login contract seen by the React client is unchanged in JSON shape; the refresh session is carried only via HttpOnly cookie. Frontend automatic token renewal remains **M2** work; until then, expired JWTs still trigger the existing `401` → clear session → `/login` behavior.
 

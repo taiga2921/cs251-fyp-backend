@@ -95,9 +95,8 @@ class AuthController extends Controller
         }
 
         try {
-            $current = $this->refreshTokenService->validatePlainToken($plainToken);
-            $rotated = $this->refreshTokenService->rotate($current, $request);
-            $user = $current->user()->with('role')->firstOrFail();
+            $rotated = $this->refreshTokenService->rotatePlainToken($plainToken, $request);
+            $user = $rotated['model']->user()->with('role')->firstOrFail();
 
             $this->syncAccessTokenTtl();
             $accessToken = auth('api')->login($user);
@@ -131,36 +130,31 @@ class AuthController extends Controller
     }
 
     /**
-     * Invalidate the current JWT and revoke the refresh session.
+     * Revoke the refresh session and invalidate JWT when present.
+     *
+     * Public route: must clear HttpOnly refresh cookie even when the bearer token is missing or expired.
      */
     public function logout(Request $request): JsonResponse
     {
         $forgetCookie = $this->refreshTokenService->forgetCookie();
-        $plainToken = $this->refreshTokenService->readPlainTokenFromRequest($request);
 
-        if ($plainToken !== null) {
-            $refreshToken = $this->refreshTokenService->findByPlainToken($plainToken);
+        $this->refreshTokenService->revokeFromPlainToken(
+            $this->refreshTokenService->readPlainTokenFromRequest($request)
+        );
 
-            if ($refreshToken !== null && $refreshToken->isActive()) {
-                $this->refreshTokenService->revoke($refreshToken);
+        if ($request->bearerToken() !== null) {
+            try {
+                auth('api')->logout();
+            } catch (JWTException) {
+                // Tolerate expired or invalid JWT; refresh revocation and cookie clearing still succeed.
             }
         }
 
-        try {
-            auth('api')->logout();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Logout successful.',
-                'data' => null,
-            ])->withCookie($forgetCookie);
-        } catch (JWTException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid or expired token.',
-                'data' => null,
-            ], 401)->withCookie($forgetCookie);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Logout successful.',
+            'data' => null,
+        ])->withCookie($forgetCookie);
     }
 
     private function buildAccessTokenResponse(User $user, string $accessToken): JsonResponse
