@@ -87,15 +87,24 @@ class UserController extends Controller
         $user = User::query()->withTrashed()->findOrFail($user);
         $validated = $request->validated();
 
-        $user->fill(collect($validated)->only([
+        $safeFields = collect($validated)->only([
             'name',
             'email',
-            'password',
             'phone',
             'address',
             'profile_picture_url',
             'profile_version',
-        ])->all());
+        ])->all();
+
+        if (array_key_exists('password', $validated) && filled($validated['password'])) {
+            $safeFields['password'] = $validated['password'];
+        }
+
+        $user->fill($safeFields);
+
+        if (array_key_exists('password', $validated) && filled($validated['password'])) {
+            $user->last_password_changed_at = now();
+        }
 
         if (array_key_exists('role_id', $validated)) {
             $user->role_id = $validated['role_id'];

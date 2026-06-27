@@ -130,6 +130,8 @@ Existing column reused:
 |--------|---------|
 | `last_password_changed_at` | Timestamp when first-login or future password change completes |
 
+Admin `PATCH /api/users/{user}` password updates set `last_password_changed_at` automatically in the controller; request payloads cannot set this field directly.
+
 ### `password_setup_tokens` (new table)
 
 | Column | Type | Notes |
@@ -322,7 +324,7 @@ php artisan test
 
 - No TOTP/OTP UI or backend enforcement (M5)
 - No dedicated `/first-login/2fa` route yet — frontend returns to login with messaging
-- Admin must still supply a temporary password at create time (`StoreUserRequest` unchanged)
+- Admin must still supply a temporary password at create time.
 - No rate limiting on setup token attempts (future hardening)
 - Setup token lost on page refresh — user must re-login with temporary password (by design)
 

@@ -323,6 +323,52 @@ class AuthPasswordSetupTest extends TestCase
         $this->assertNull($target->last_password_changed_at);
     }
 
+    public function test_admin_user_password_update_sets_last_password_changed_at(): void
+    {
+        Carbon::setTestNow('2026-06-28 14:00:00');
+
+        $admin = $this->adminUser();
+        $target = User::factory()->create([
+            'role_id' => Role::query()->where('name', 'Guard')->value('id'),
+            'password' => Hash::make('ExistingPassword1!'),
+            'last_password_changed_at' => null,
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/users/'.$target->getKey(), [
+                'password' => 'UpdatedPassword1!',
+            ])
+            ->assertOk();
+
+        $target->refresh();
+        $this->assertTrue(Hash::check('UpdatedPassword1!', $target->password));
+        $this->assertNotNull($target->last_password_changed_at);
+        $this->assertTrue($target->last_password_changed_at->equalTo(Carbon::parse('2026-06-28 14:00:00')));
+
+        Carbon::setTestNow();
+    }
+
+    public function test_admin_user_non_password_update_does_not_change_last_password_changed_at(): void
+    {
+        $admin = $this->adminUser();
+        $originalTimestamp = Carbon::parse('2026-01-15 10:30:00');
+        $target = User::factory()->create([
+            'role_id' => Role::query()->where('name', 'Guard')->value('id'),
+            'last_password_changed_at' => $originalTimestamp,
+        ]);
+
+        $this->actingAs($admin, 'api')
+            ->patchJson('/api/users/'.$target->getKey(), [
+                'name' => 'Renamed Guard User',
+                'phone' => '555-0100',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.name', 'Renamed Guard User');
+
+        $target->refresh();
+        $this->assertTrue($target->last_password_changed_at->equalTo($originalTimestamp));
+    }
+
     private function extractRefreshCookie($response): ?Cookie
     {
         foreach ($response->headers->getCookies() as $cookie) {
