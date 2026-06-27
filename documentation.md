@@ -1098,6 +1098,8 @@ The `anpr_event_logs` module is implemented and wired:
 
 ## 6. Authentication & authorization
 
+**Login Module baseline (M0):** Current JWT auth behavior, protected API inventory, gap analysis, and migration path are documented in [`docs/login/m0-auth-baseline-and-current-audit.md`](docs/login/m0-auth-baseline-and-current-audit.md). Target design: [`../login-module.md`](../login-module.md).
+
 ### Authentication method
 
 - **JWT** using `**php-open-source-saver/jwt-auth`\*\*.
