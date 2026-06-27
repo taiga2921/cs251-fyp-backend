@@ -22,6 +22,7 @@ class UserResource extends JsonResource
             'address' => $this->address,
             'profile_picture_url' => $this->profile_picture_url,
             'two_factor_enabled' => $this->two_factor_enabled,
+            'two_factor_confirmed_at' => $this->two_factor_confirmed_at,
             'setup_required' => $this->setup_required,
             'last_password_changed_at' => $this->last_password_changed_at,
             'email_verified_at' => $this->email_verified_at,

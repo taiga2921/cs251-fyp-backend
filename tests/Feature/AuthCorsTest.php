@@ -5,11 +5,13 @@ namespace Tests\Feature;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\CreatesPatrolUsers;
+use Tests\Concerns\EnablesTwoFactorAuth;
 use Tests\TestCase;
 
 class AuthCorsTest extends TestCase
 {
     use CreatesPatrolUsers;
+    use EnablesTwoFactorAuth;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -39,13 +41,25 @@ class AuthCorsTest extends TestCase
 
     public function test_login_from_allowed_origin_includes_credentialed_cors_headers(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
         $origin = 'http://localhost:5173';
 
-        $response = $this->withHeader('Origin', $origin)
+        $loginResponse = $this->withHeader('Origin', $origin)
             ->postJson('/api/auth/login', [
                 'email' => $user->email,
                 'password' => 'password',
+            ]);
+
+        $loginResponse->assertOk()
+            ->assertHeader('Access-Control-Allow-Origin', $origin)
+            ->assertHeader('Access-Control-Allow-Credentials', 'true')
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.next_step', 'otp_required');
+
+        $response = $this->withHeader('Origin', $origin)
+            ->postJson('/api/auth/otp/verify', [
+                'login_challenge_id' => $loginResponse->json('data.login_challenge_id'),
+                'otp' => $this->currentTotp(),
             ]);
 
         $response->assertOk()

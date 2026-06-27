@@ -13,11 +13,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Cookie;
 use Tests\Concerns\CreatesPatrolUsers;
+use Tests\Concerns\EnablesTwoFactorAuth;
 use Tests\TestCase;
 
 class PatrolTokenExpiryTest extends TestCase
 {
     use CreatesPatrolUsers;
+    use EnablesTwoFactorAuth;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -46,7 +48,7 @@ class PatrolTokenExpiryTest extends TestCase
     {
         $this->travelTo(Carbon::parse('2026-06-27 10:00:00'));
 
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
         $patrol = PatrolSession::factory()->create([
             'user_id' => $user->id,
             'status' => 'active',
@@ -57,10 +59,7 @@ class PatrolTokenExpiryTest extends TestCase
         $this->postJson('/api/pwa/sync', $payload)
             ->assertUnauthorized();
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $loginResponse->assertOk()
             ->assertCookie('refresh_token');
@@ -98,7 +97,7 @@ class PatrolTokenExpiryTest extends TestCase
     {
         $this->travelTo(Carbon::parse('2026-06-27 10:00:00'));
 
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
         $patrol = PatrolSession::factory()->create([
             'user_id' => $user->id,
             'status' => 'active',

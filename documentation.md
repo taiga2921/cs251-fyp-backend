@@ -281,10 +281,13 @@ Validation errors (FormRequest / `ValidationException`): typically `**422`\*\* w
 
 | Method | URI               | Controller@method      | Middleware       | Purpose   | Request validation                                         | Response                                                                                    |
 | ------ | ----------------- | ---------------------- | ---------------- | --------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| POST   | `/api/auth/login` | `AuthController@login` | `api` stack only | JWT login + refresh cookie; **or** setup-required branch | Inline: `email` required email, `password` required string | Normal: JSON with `access_token`, `user`, `role`; HttpOnly refresh cookie. **Setup-required:** `next_step = password_setup_required`, `setup_token`, `expires_in`; **no** JWT, **no** refresh cookie |
-| POST   | `/api/auth/refresh` | `AuthController@refresh` | `api` stack only | Rotate refresh session; issue new JWT | Refresh cookie required | Same JSON shape as login; rotates HttpOnly cookie; **401** if cookie missing/invalid or user is `setup_required` |
+| POST   | `/api/auth/login` | `AuthController@login` | `api` stack only | Credential validation + auth branching | Inline: `email` required email, `password` required string | Branches: `password_setup_required`, `two_factor_setup_required`, `otp_required`; JWT + cookie only after OTP/setup verify (**M5**) |
+| POST   | `/api/auth/refresh` | `AuthController@refresh` | `api` stack only | Rotate refresh session; issue new JWT | Refresh cookie required | Same JSON shape as login; rotates HttpOnly cookie; **401** if cookie missing/invalid, user is `setup_required`, or `two_factor_enabled = false` |
 | POST   | `/api/auth/logout` | `AuthController@logout` | `api` stack only | Revoke refresh session + clear cookie; invalidate JWT when bearer present | Refresh cookie optional; bearer optional | JSON: `success`, `message`, `data`; always clears refresh cookie (**200** even if JWT missing/expired) |
-| POST   | `/api/auth/password-setup/complete` | `AuthController@completePasswordSetup` | `api` stack only | Complete first-login password setup | `CompletePasswordSetupRequest`: `setup_token`, `password` (min from config), confirmed | JSON: `next_step = two_factor_setup_required`, `user`; **no** JWT or refresh cookie |
+| POST   | `/api/auth/password-setup/complete` | `AuthController@completePasswordSetup` | `api` stack only | Complete first-login password setup | `CompletePasswordSetupRequest`: `setup_token`, `password` (min from config), confirmed | JSON: `next_step = two_factor_setup_required`, `two_factor_setup_token`, `user`; **no** JWT or refresh cookie |
+| POST   | `/api/auth/2fa/setup/start` | `AuthController@startTwoFactorSetup` | `api` stack only | Begin TOTP setup | `StartTwoFactorSetupRequest`: `two_factor_setup_token` | JSON: `manual_key`, `otpauth_uri`, `expires_in`; **no** JWT or refresh cookie (**M5**) |
+| POST   | `/api/auth/2fa/setup/verify` | `AuthController@verifyTwoFactorSetup` | `api` stack only | Confirm TOTP setup | `VerifyTwoFactorSetupRequest`: `two_factor_setup_token`, `otp` | JWT + refresh cookie on success (**M5**) |
+| POST   | `/api/auth/otp/verify` | `AuthController@verifyOtp` | `api` stack only | Verify login OTP challenge | `VerifyOtpRequest`: `login_challenge_id`, `otp` | JWT + refresh cookie on success (**M5**) |
 
 ### Protected endpoints (`auth:api` middleware on route group)
 
@@ -1109,7 +1112,9 @@ The `anpr_event_logs` module is implemented and wired:
 
 **Login Module M3 (patrol token expiry safety):** PWA `flushSyncQueue()` continuity via shared `api.js` refresh-on-401 is documented in [`docs/login/m3-patrol-token-expiry-safety.md`](docs/login/m3-patrol-token-expiry-safety.md). Verification tests only; no backend runtime changes in M3.
 
-**Login Module M4 (first-login password setup):** Setup-required users, hashed setup tokens, and password completion API are documented in [`docs/login/m4-first-login-password-setup.md`](docs/login/m4-first-login-password-setup.md). Mandatory TOTP enforcement is deferred to M5.
+**Login Module M4 (first-login password setup):** Setup-required users, hashed setup tokens, and password completion API are documented in [`docs/login/m4-first-login-password-setup.md`](docs/login/m4-first-login-password-setup.md).
+
+**Login Module M5 (mandatory TOTP 2FA):** TOTP enrollment, login OTP challenges, and session gating are documented in [`docs/login/m5-totp-two-factor-authentication.md`](docs/login/m5-totp-two-factor-authentication.md).
 
 ### Authentication method
 
@@ -1123,11 +1128,13 @@ The `anpr_event_logs` module is implemented and wired:
 
 ### Token flow
 
-1. `POST /api/auth/login` validates credentials, calls `auth('api')->attempt($credentials)`.
-2. On success for users with `setup_required = false`, returns `access_token` (JWT string), `token_type`, `expires_in`, authenticated `user`, and the user's `role`, and sets an HttpOnly `refresh_token` cookie (opaque; stored hashed in `refresh_tokens`).
-3. On success for users with `setup_required = true`, invalidates the short-lived JWT from `attempt`, returns `next_step = password_setup_required` with a one-time `setup_token`, and does **not** set access token or refresh cookie (**M4**).
-4. `POST /api/auth/password-setup/complete` (public) validates a setup token and new password, sets `setup_required = false` and `last_password_changed_at`, and returns `next_step = two_factor_setup_required` without issuing JWT or refresh cookie (**M4**; M5 owns mandatory 2FA).
-5. `POST /api/auth/refresh` (public route) reads the refresh cookie, validates the session, and **rejects users with `setup_required = true`** by revoking the refresh row and clearing the cookie (**401**). Otherwise it rotates the DB session inside a transaction with row locking and returns a new access token JSON payload plus a new cookie.
+1. `POST /api/auth/login` validates credentials with `Hash::check` (no JWT before OTP). Branches: `password_setup_required`, `two_factor_setup_required`, or `otp_required` — each returns short-lived tokens/challenge IDs without JWT or refresh cookie when setup or 2FA is incomplete (**M4/M5**).
+2. On success after OTP verification (`POST /api/auth/otp/verify`) or 2FA setup verification (`POST /api/auth/2fa/setup/verify`), returns `access_token`, `token_type`, `expires_in`, authenticated `user`, and the user's `role`, and sets an HttpOnly `refresh_token` cookie.
+3. On success for users with `setup_required = true`, returns `next_step = password_setup_required` with a one-time `setup_token`, and does **not** set access token or refresh cookie (**M4**).
+4. `POST /api/auth/password-setup/complete` (public) validates a setup token and new password, sets `setup_required = false` and `last_password_changed_at`, and returns `next_step = two_factor_setup_required` with `two_factor_setup_token` without issuing JWT or refresh cookie (**M4/M5**).
+5. `POST /api/auth/2fa/setup/start` and `POST /api/auth/2fa/setup/verify` (public) handle mandatory TOTP enrollment; verify success issues JWT + refresh cookie (**M5**).
+6. `POST /api/auth/otp/verify` (public) validates login OTP challenges and issues JWT + refresh cookie (**M5**).
+7. `POST /api/auth/refresh` (public route) reads the refresh cookie, validates the session, and **rejects users with `setup_required = true` or `two_factor_enabled = false`** by revoking the refresh row and clearing the cookie (**401**). Otherwise it rotates the DB session inside a transaction with row locking and returns a new access token JSON payload plus a new cookie.
 6. Clients send `Authorization: Bearer <token>` for protected routes under `Route::middleware('auth:api')` (`auth/me`, users/roles, blockchain-records, zones, cameras, vehicles, ANPR modules, checkpoints, patrol sessions, checkpoint events/metrics, location logs, etc.). **`POST /api/auth/logout` is public** so the HttpOnly refresh cookie can be revoked even when the bearer JWT is missing or expired.
 7. Admin-only routes are wrapped with `Route::middleware('admin')`; non-admin users receive **403 Forbidden** JSON.
 8. `POST /api/auth/logout` always clears the refresh cookie and revokes the matching DB refresh row when present; invalidates the JWT only when a valid bearer token is supplied. `GET /api/auth/me` returns the authenticated profile and role.

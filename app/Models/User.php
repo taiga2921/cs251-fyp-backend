@@ -69,6 +69,7 @@ class User extends Authenticatable implements JWTSubject
             'last_password_changed_at' => 'datetime',
             'setup_required' => 'boolean',
             'two_factor_enabled' => 'boolean',
+            'two_factor_confirmed_at' => 'datetime',
             'profile_version' => 'integer',
             'password' => 'hashed',
         ];
@@ -100,6 +101,16 @@ class User extends Authenticatable implements JWTSubject
     public function passwordSetupTokens(): HasMany
     {
         return $this->hasMany(PasswordSetupToken::class);
+    }
+
+    public function authLoginChallenges(): HasMany
+    {
+        return $this->hasMany(AuthLoginChallenge::class);
+    }
+
+    public function twoFactorSetupSessions(): HasMany
+    {
+        return $this->hasMany(TwoFactorSetupSession::class);
     }
 
     public function getJWTIdentifier(): mixed

@@ -8,11 +8,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Symfony\Component\HttpFoundation\Cookie;
 use Tests\Concerns\CreatesPatrolUsers;
+use Tests\Concerns\EnablesTwoFactorAuth;
 use Tests\TestCase;
 
 class AuthRefreshTokenTest extends TestCase
 {
     use CreatesPatrolUsers;
+    use EnablesTwoFactorAuth;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -31,12 +33,8 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_successful_login_returns_access_token_and_sets_refresh_cookie(): void
     {
-        $user = $this->guardUser();
-
-        $response = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $user = $this->enableTwoFactor($this->guardUser());
+        $response = $this->loginWithOtp($user)['verify'];
 
         $response->assertOk()
             ->assertJsonPath('success', true)
@@ -62,12 +60,8 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_valid_refresh_cookie_returns_new_access_token_and_rotates_cookie(): void
     {
-        $user = $this->guardUser();
-
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $user = $this->enableTwoFactor($this->guardUser());
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $originalCookie = $this->extractRefreshCookie($loginResponse);
         $originalTokenId = RefreshToken::query()->value('id');
@@ -102,7 +96,7 @@ class AuthRefreshTokenTest extends TestCase
     {
         Carbon::setTestNow('2026-06-27 10:00:00');
 
-        $created = app(\App\Services\Auth\RefreshTokenService::class)->createForUser($this->guardUser());
+        $created = app(\App\Services\Auth\RefreshTokenService::class)->createForUser($this->enableTwoFactor($this->guardUser()));
 
         Carbon::setTestNow('2026-06-28 10:00:00');
 
@@ -117,7 +111,7 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_refresh_with_revoked_token_returns_unauthorized(): void
     {
-        $created = app(\App\Services\Auth\RefreshTokenService::class)->createForUser($this->guardUser());
+        $created = app(\App\Services\Auth\RefreshTokenService::class)->createForUser($this->enableTwoFactor($this->guardUser()));
         $created['model']->revoke();
 
         $this->withUnencryptedCookie($this->refreshCookieName(), $created['plain_token'])
@@ -128,12 +122,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_reusing_rotated_refresh_token_revokes_family(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $originalCookie = $this->extractRefreshCookie($loginResponse);
         $family = RefreshToken::query()->value('token_family');
@@ -156,12 +147,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_logout_revokes_refresh_token_and_clears_cookie(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $accessToken = $loginResponse->json('data.access_token');
         $refreshCookie = $this->extractRefreshCookie($loginResponse);
@@ -183,12 +171,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_logout_revokes_refresh_session_without_bearer_token(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $refreshCookie = $this->extractRefreshCookie($loginResponse);
         $refreshTokenId = RefreshToken::query()->value('id');
@@ -207,12 +192,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_logout_revokes_refresh_session_when_bearer_token_is_expired_or_invalid(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $refreshCookie = $this->extractRefreshCookie($loginResponse);
         $refreshTokenId = RefreshToken::query()->value('id');
@@ -240,12 +222,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_refresh_after_logout_fails_with_unauthorized(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $refreshCookie = $this->extractRefreshCookie($loginResponse);
 
@@ -280,12 +259,9 @@ class AuthRefreshTokenTest extends TestCase
     {
         config(['auth_security.refresh_cookie_name' => 'ikh_refresh_token']);
 
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $loginResponse->assertOk()
             ->assertCookie('ikh_refresh_token');
@@ -310,12 +286,9 @@ class AuthRefreshTokenTest extends TestCase
 
     public function test_refresh_rejects_setup_required_user_and_revokes_session(): void
     {
-        $user = $this->guardUser();
+        $user = $this->enableTwoFactor($this->guardUser());
 
-        $loginResponse = $this->postJson('/api/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $loginResponse = $this->loginWithOtp($user)['verify'];
 
         $cookie = $this->extractRefreshCookie($loginResponse);
         $refreshTokenId = RefreshToken::query()->value('id');

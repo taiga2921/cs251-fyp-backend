@@ -27,6 +27,9 @@ Route::post('auth/login', [AuthController::class, 'login']);
 Route::post('auth/refresh', [AuthController::class, 'refresh']);
 Route::post('auth/logout', [AuthController::class, 'logout']);
 Route::post('auth/password-setup/complete', [AuthController::class, 'completePasswordSetup']);
+Route::post('auth/2fa/setup/start', [AuthController::class, 'startTwoFactorSetup']);
+Route::post('auth/2fa/setup/verify', [AuthController::class, 'verifyTwoFactorSetup']);
+Route::post('auth/otp/verify', [AuthController::class, 'verifyOtp']);
 
 Route::middleware('auth:api')->group(function (): void {
     Route::post('broadcasting/auth', function (Request $request) {

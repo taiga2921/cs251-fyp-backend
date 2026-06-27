@@ -12,11 +12,13 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpFoundation\Cookie;
 use Tests\Concerns\CreatesPatrolUsers;
+use Tests\Concerns\EnablesTwoFactorAuth;
 use Tests\TestCase;
 
 class AuthPasswordSetupTest extends TestCase
 {
     use CreatesPatrolUsers;
+    use EnablesTwoFactorAuth;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -178,6 +180,7 @@ class AuthPasswordSetupTest extends TestCase
 
         $completeResponse->assertOk()
             ->assertJsonPath('data.next_step', 'two_factor_setup_required')
+            ->assertJsonStructure(['data' => ['two_factor_setup_token', 'expires_in']])
             ->assertJsonPath('data.user.setup_required', false);
 
         $user->refresh();
@@ -215,14 +218,32 @@ class AuthPasswordSetupTest extends TestCase
         ]);
 
         $loginResponse->assertOk()
-            ->assertJsonPath('data.access_token', fn ($token) => is_string($token) && $token !== '')
-            ->assertCookie('refresh_token');
+            ->assertJsonPath('data.next_step', 'two_factor_setup_required')
+            ->assertCookieMissing('refresh_token');
     }
 
-    public function test_completed_setup_user_login_still_issues_refresh_session(): void
+    public function test_completed_setup_user_with_two_factor_can_login_after_otp(): void
     {
         $user = User::factory()->create([
             'setup_required' => false,
+            'password' => Hash::make('ExistingPassword1!'),
+        ]);
+        $user = $this->enableTwoFactor($user);
+
+        $verify = $this->loginWithOtp($user, 'ExistingPassword1!')['verify'];
+
+        $verify->assertOk()
+            ->assertJsonStructure(['data' => ['access_token']])
+            ->assertCookie('refresh_token');
+
+        $this->assertDatabaseCount('refresh_tokens', 1);
+    }
+
+    public function test_completed_setup_user_without_two_factor_routes_to_setup(): void
+    {
+        $user = User::factory()->create([
+            'setup_required' => false,
+            'two_factor_enabled' => false,
             'password' => Hash::make('ExistingPassword1!'),
         ]);
 
@@ -232,10 +253,8 @@ class AuthPasswordSetupTest extends TestCase
         ]);
 
         $response->assertOk()
-            ->assertJsonStructure(['data' => ['access_token']])
-            ->assertCookie('refresh_token');
-
-        $this->assertDatabaseCount('refresh_tokens', 1);
+            ->assertJsonPath('data.next_step', 'two_factor_setup_required')
+            ->assertCookieMissing('refresh_token');
     }
 
     public function test_admin_user_creation_rejects_password_shorter_than_configured_minimum(): void

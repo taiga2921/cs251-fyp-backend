@@ -4,15 +4,23 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CompletePasswordSetupRequest;
+use App\Http\Requests\StartTwoFactorSetupRequest;
+use App\Http\Requests\VerifyOtpRequest;
+use App\Http\Requests\VerifyTwoFactorSetupRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\Auth\AuthLoginChallengeService;
+use App\Services\Auth\InvalidOtpChallengeException;
 use App\Services\Auth\InvalidPasswordSetupTokenException;
 use App\Services\Auth\InvalidRefreshTokenException;
+use App\Services\Auth\InvalidTwoFactorSetupTokenException;
 use App\Services\Auth\PasswordSetupService;
 use App\Services\Auth\RefreshTokenReuseException;
 use App\Services\Auth\RefreshTokenService;
+use App\Services\Auth\TwoFactorSetupService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
 use Symfony\Component\HttpFoundation\Cookie;
@@ -23,10 +31,12 @@ class AuthController extends Controller
     public function __construct(
         private readonly RefreshTokenService $refreshTokenService,
         private readonly PasswordSetupService $passwordSetupService,
+        private readonly TwoFactorSetupService $twoFactorSetupService,
+        private readonly AuthLoginChallengeService $authLoginChallengeService,
     ) {}
 
     /**
-     * Issue a JWT for API access (email / password).
+     * Validate credentials and route to password setup, 2FA setup, or OTP challenge.
      */
     public function login(Request $request): JsonResponse
     {
@@ -44,12 +54,10 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            $this->syncAccessTokenTtl();
-
             $credentials = $validator->validated();
-            $token = auth('api')->attempt($credentials);
+            $user = User::query()->where('email', $credentials['email'])->first();
 
-            if ($token === false) {
+            if ($user === null || ! Hash::check($credentials['password'], $user->password)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Invalid credentials.',
@@ -57,21 +65,10 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            $user = auth('api')->user()?->loadMissing('role');
-
-            if ($user === null) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid credentials.',
-                    'data' => null,
-                ], 401);
-            }
+            $user->loadMissing('role');
 
             if ($user->setup_required) {
-                auth('api')->logout();
-
                 $setupSession = $this->passwordSetupService->createForUser($user);
-                $expiresAt = $setupSession['model']->expires_at;
 
                 return response()->json([
                     'success' => true,
@@ -79,7 +76,7 @@ class AuthController extends Controller
                     'data' => [
                         'next_step' => 'password_setup_required',
                         'setup_token' => $setupSession['plain_token'],
-                        'expires_in' => $expiresAt !== null ? max(0, $expiresAt->diffInSeconds(now())) : 0,
+                        'expires_in' => $this->secondsUntil($setupSession['model']->expires_at),
                         'user' => [
                             'email' => $user->email,
                             'setup_required' => true,
@@ -88,10 +85,39 @@ class AuthController extends Controller
                 ], 200);
             }
 
-            $refreshSession = $this->refreshTokenService->createForUser($user, $request);
+            if (! $user->two_factor_enabled) {
+                $setupSession = $this->twoFactorSetupService->createForUser($user);
 
-            return $this->buildAccessTokenResponse($user, $token)
-                ->withCookie($this->refreshTokenService->makeCookie($refreshSession['plain_token']));
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Two-factor setup required.',
+                    'data' => [
+                        'next_step' => 'two_factor_setup_required',
+                        'two_factor_setup_token' => $setupSession['plain_token'],
+                        'expires_in' => $this->secondsUntil($setupSession['model']->expires_at),
+                        'user' => [
+                            'email' => $user->email,
+                            'setup_required' => false,
+                            'two_factor_enabled' => false,
+                        ],
+                    ],
+                ], 200);
+            }
+
+            $challenge = $this->authLoginChallengeService->createForUser($user, $request);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP verification required.',
+                'data' => [
+                    'next_step' => 'otp_required',
+                    'login_challenge_id' => $challenge->getKey(),
+                    'expires_in' => $this->secondsUntil($challenge->expires_at),
+                    'user' => [
+                        'email' => $user->email,
+                    ],
+                ],
+            ], 200);
         } catch (Throwable $e) {
             report($e);
 
@@ -118,12 +144,20 @@ class AuthController extends Controller
                 $request->validated('password'),
             );
 
+            $setupSession = $this->twoFactorSetupService->createForUser($user);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Password setup completed successfully.',
                 'data' => [
                     'next_step' => 'two_factor_setup_required',
-                    'user' => (new UserResource($user))->resolve(),
+                    'two_factor_setup_token' => $setupSession['plain_token'],
+                    'expires_in' => $this->secondsUntil($setupSession['model']->expires_at),
+                    'user' => [
+                        'email' => $user->email,
+                        'setup_required' => false,
+                        'two_factor_enabled' => false,
+                    ],
                 ],
             ], 200);
         } catch (InvalidPasswordSetupTokenException) {
@@ -148,6 +182,105 @@ class AuthController extends Controller
     }
 
     /**
+     * Begin TOTP setup for a short-lived setup token.
+     */
+    public function startTwoFactorSetup(StartTwoFactorSetupRequest $request): JsonResponse
+    {
+        try {
+            $started = $this->twoFactorSetupService->startSetup(
+                $request->validated('two_factor_setup_token')
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Two-factor setup started.',
+                'data' => [
+                    'next_step' => 'two_factor_setup_verify_required',
+                    'manual_key' => $started['manual_key'],
+                    'otpauth_uri' => $started['otpauth_uri'],
+                    'expires_in' => $started['expires_in'],
+                ],
+            ], 200);
+        } catch (InvalidTwoFactorSetupTokenException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Two-factor setup token is invalid or expired.',
+                'data' => null,
+            ], 422);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => config('app.debug') ? $e->getMessage() : 'An unexpected error occurred.',
+                'data' => null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify TOTP during first-login setup and issue authenticated session.
+     */
+    public function verifyTwoFactorSetup(VerifyTwoFactorSetupRequest $request): JsonResponse
+    {
+        try {
+            $user = $this->twoFactorSetupService->verifySetup(
+                $request->validated('two_factor_setup_token'),
+                $request->validated('otp'),
+            );
+
+            return $this->issueAuthenticatedSession($user, $request);
+        } catch (InvalidTwoFactorSetupTokenException $e) {
+            $message = str_contains($e->getMessage(), 'authentication code')
+                ? 'The provided authentication code is invalid.'
+                : 'Two-factor setup token is invalid or expired.';
+
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+                'data' => null,
+            ], 422);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => config('app.debug') ? $e->getMessage() : 'An unexpected error occurred.',
+                'data' => null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Verify OTP for a login challenge and issue authenticated session.
+     */
+    public function verifyOtp(VerifyOtpRequest $request): JsonResponse
+    {
+        try {
+            $user = $this->authLoginChallengeService->verify(
+                $request->validated('login_challenge_id'),
+                $request->validated('otp'),
+            );
+
+            return $this->issueAuthenticatedSession($user, $request);
+        } catch (InvalidOtpChallengeException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The authentication code is invalid or expired.',
+                'data' => null,
+            ], 422);
+        } catch (Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => config('app.debug') ? $e->getMessage() : 'An unexpected error occurred.',
+                'data' => null,
+            ], 500);
+        }
+    }
+
+    /**
      * Rotate the refresh session and issue a new JWT access token.
      */
     public function refresh(Request $request): JsonResponse
@@ -163,7 +296,7 @@ class AuthController extends Controller
             $validatedToken = $this->refreshTokenService->validatePlainToken($plainToken);
             $user = $validatedToken->user()->with('role')->firstOrFail();
 
-            if ($user->setup_required) {
+            if ($user->setup_required || ! $user->two_factor_enabled) {
                 $this->refreshTokenService->revokeFromPlainToken($plainToken);
 
                 return $this->refreshFailureResponse($forgetCookie);
@@ -204,8 +337,6 @@ class AuthController extends Controller
 
     /**
      * Revoke the refresh session and invalidate JWT when present.
-     *
-     * Public route: must clear HttpOnly refresh cookie even when the bearer token is missing or expired.
      */
     public function logout(Request $request): JsonResponse
     {
@@ -228,6 +359,16 @@ class AuthController extends Controller
             'message' => 'Logout successful.',
             'data' => null,
         ])->withCookie($forgetCookie);
+    }
+
+    private function issueAuthenticatedSession(User $user, Request $request): JsonResponse
+    {
+        $this->syncAccessTokenTtl();
+        $accessToken = auth('api')->login($user);
+        $refreshSession = $this->refreshTokenService->createForUser($user, $request);
+
+        return $this->buildAccessTokenResponse($user, $accessToken)
+            ->withCookie($this->refreshTokenService->makeCookie($refreshSession['plain_token']));
     }
 
     private function buildAccessTokenResponse(User $user, string $accessToken): JsonResponse
@@ -261,5 +402,14 @@ class AuthController extends Controller
         config([
             'jwt.ttl' => (int) config('auth_security.access_token_ttl_minutes', config('jwt.ttl', 60)),
         ]);
+    }
+
+    private function secondsUntil(?\Illuminate\Support\Carbon $expiresAt): int
+    {
+        if ($expiresAt === null) {
+            return 0;
+        }
+
+        return max(0, $expiresAt->diffInSeconds(now()));
     }
 }
